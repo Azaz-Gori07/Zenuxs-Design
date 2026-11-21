@@ -474,7 +474,7 @@ pub fn paint_wordmark(painter: &egui::Painter, left_center: egui::Pos2, size: f3
     painter.text(egui::pos2(left_center.x + sycn_width, left_center.y), egui::Align2::LEFT_CENTER, "UI", font, t.accent_text);
 }
 
-/// Paint the owner's original chameleon icon from the existing app asset.
+/// Paint sycnUI's official app icon from the asset.
 pub fn paint_app_icon(ui: &egui::Ui, rect: egui::Rect) {
     static ICON: OnceLock<Option<egui::ColorImage>> = OnceLock::new();
     let image = ICON.get_or_init(|| {
