@@ -251,7 +251,7 @@ or a gradient with `stops`. Padding is `24`, `[top,right,bottom,left]` or `{top,
 3. Sections of the frame are frames with auto layout, not loose layers at coordinates. A page is a \
    stack of sections; a card is a frame with `layout: \"vertical\"`, a gap and padding.
 4. Text is a text layer with real `characters`, a size from the scale, and `sizingH: \"fill\"` inside \
-   a layout. Never a rectangle pretending to be text, never empty text, never `Lorem ipsum`.
+   a layout. Never a rectangle pretending to be text, never empty text, never `Lorem ipsum`. Any font family can be set via `fontFamily` in props (e.g. \"Inter\", \"Playfair Display\", serif); `text.loadFont` takes `family` to load or download fonts.
 5. Check as you go: `get_node` on the frame after a section lands, and `screenshot` when the \
    question is what it looks like.
 6. Before you say it is finished, `audit_layout` the screen and fix every finding, then \

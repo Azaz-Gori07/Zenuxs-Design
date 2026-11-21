@@ -762,10 +762,34 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "text.loadFont",
             "Load font file",
-            "{path | data (base64)}  adds a font file (.ttf, .otf, .ttc, .otc; every face of a collection) to this session's fonts without installing it; the open document's auto-sizing text in its families fits it (text.refit) → {families, refitted: [ids]}",
+            "{path | data (base64) | family}  adds a font file (.ttf, .otf, .ttc, .otc; every face of a collection) to this session's fonts without installing it, or activates/downloads a font family (font.download); the open document's auto-sizing text in its families fits it (text.refit) → {families, refitted: [ids]}",
             true,
             |s, p| {
                 let cmd = "text.loadFont";
+                if let Some(family) = string(p, "family") {
+                    let fam = family.trim().to_string();
+                    if fam.is_empty() {
+                        return Err(bad(cmd, "`family` cannot be empty"));
+                    }
+                    if figcraft_text::has_family(&fam) {
+                        let refitted = crate::fonts::refit_open(s, None, Some(std::slice::from_ref(&fam)));
+                        return Ok(json!({"families": [fam], "refitted": refitted, "state": "installed"}));
+                    }
+                    if let Ok(res) = s.execute("font.download", &json!({"family": fam})) {
+                        let refitted = res.get("refitted").cloned().unwrap_or_else(|| json!([]));
+                        return Ok(json!({"families": [fam], "refitted": refitted, "download": res}));
+                    }
+                    figcraft_text::rescan_system_fonts();
+                    if figcraft_text::has_family(&fam) {
+                        let refitted = crate::fonts::refit_open(s, None, Some(std::slice::from_ref(&fam)));
+                        return Ok(json!({"families": [fam], "refitted": refitted, "state": "installed"}));
+                    }
+                    return Ok(json!({
+                        "families": [fam],
+                        "refitted": [],
+                        "note": format!("Font family '{fam}' selected. Text layers can use props: {{\"fontFamily\": \"{fam}\"}}.")
+                    }));
+                }
                 let bytes = if let Some(b64) = string(p, "data") {
                     use base64::Engine as _;
                     let b64 = b64.split_once(',').map(|(_, d)| d.to_string()).unwrap_or(b64);
@@ -773,7 +797,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 } else if let Some(path) = string(p, "path") {
                     super::file::read_capped(&path, figcraft_text::fontdb::MAX_FONT_FILE)?
                 } else {
-                    return Err(bad(cmd, "pass `path` or `data` (base64)"));
+                    return Err(bad(cmd, "pass `path`, `data` (base64) or `family`"));
                 };
                 let families = figcraft_text::load_font_bytes(bytes);
                 if families.is_empty() {

@@ -226,6 +226,11 @@ fn fonts_load_from_files_and_rescans_report_new_families() {
     assert!(s.execute("text.loadFont", &json!({"data": "bm90IGEgZm9udA=="})).is_err(), "not a font file");
     assert!(s.execute("text.loadFont", &json!({"data": "%%%"})).is_err());
     assert!(s.execute("text.loadFont", &json!({"path": "no-such-dir/x.ttf"})).is_err());
+    assert!(s.execute("text.loadFont", &json!({"family": ""})).is_err());
+    let res = s.execute("text.loadFont", &json!({"family": "Inter"})).unwrap();
+    assert_eq!(res["families"][0], "Inter");
+    let res2 = s.execute("text.loadFont", &json!({"family": "Playfair Display"})).unwrap();
+    assert_eq!(res2["families"][0], "Playfair Display");
     if let Some(f) = figcraft_text::CRAFT_FONTS.first() {
         use base64::Engine as _;
         let data = base64::engine::general_purpose::STANDARD.encode(f.bytes);

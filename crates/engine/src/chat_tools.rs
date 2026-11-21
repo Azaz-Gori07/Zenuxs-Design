@@ -35,6 +35,8 @@ pub fn instead_of(name: &str) -> String {
     // told to call `get_node` for a picture goes looking for a file on disk instead.
     let right = if has(&["image", "images", "photo", "photos", "picture", "stock", "asset"]) {
         "source_image, which searches the public libraries that need no key and places what the Vision model approves — one call for every image slot on the screen"
+    } else if has(&["font", "fonts", "typeface"]) {
+        "set_properties with `fontFamily: \"Name\"` on text layers (or run_command `text.loadFont` with `family` or `data`)"
     } else if has(&["read", "get", "fetch", "look", "inspect", "see", "list", "view", "show"]) {
         "get_node (one layer by id), inspect_document (the pages and the tree) or list_commands (the catalogue)"
     } else if has(&["create", "add", "make", "new", "draw", "insert", "place"]) {
@@ -506,10 +508,11 @@ effects: [{\"type\":\"dropShadow\",\"color\":\"#00000026\",\"x\":0,\"y\":4,\"blu
     if wanted(&["text", "font", "character", "lineheight", "letterspacing", "align", "wrap"]) {
         out.push_str(
             "\
-characters: \"Hello\" (or text). fontFamily: \"Inter\". fontStyle: \"Regular\"|\"Medium\"|\"Semi Bold\"|\"Bold\"|\"Italic\".
+characters: \"Hello\" (or text). fontFamily: \"Inter\" (or any family name, e.g. \"Playfair Display\", \"Roboto\"). fontStyle: \"Regular\"|\"Medium\"|\"Semi Bold\"|\"Bold\"|\"Italic\".
 fontSize: 16. lineHeight: \"auto\" | 24 | \"150%\". letterSpacing: 0 | \"2%\". textAlign: left|center|right|justified.
 textAlignVertical: top|center|bottom. textAutoResize: widthAndHeight (hugs) | height (fixed width, wraps) | none | truncate.
 textCase: original|upper|lower|title. maxLines: 2. paragraphSpacing: 8.
+(Fonts can be loaded by family name via text.loadFont with `family`, or directly specified on text layers via `fontFamily`.)
 ",
         );
     }
