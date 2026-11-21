@@ -337,16 +337,16 @@ static TABLE: std::sync::LazyLock<Vec<ChatTool>> = std::sync::LazyLock::new(|| {
         },
         ChatTool {
             name: "search_icons",
-            description: "Search 200,000+ vector icons (Iconify, Lucide, Phosphor, Material). Returns a list of matching icon identifiers.",
-            schema: obj(json!({"query": s("The icon name, keyword, or category (e.g. 'home', 'user', 'settings', 'arrow')")}), &["query"]),
+            description: "Search 2,000+ Font Awesome Free (v6) vector icons (fa6-solid, fa6-regular, fa6-brands). Returns a list of matching icon identifiers.",
+            schema: obj(json!({"query": s("The icon name, keyword, or category (e.g. 'house', 'user', 'gear', 'star')")}), &["query"]),
             command: None,
         },
         ChatTool {
             name: "add_icon_to_canvas",
-            description: "Insert a vector icon onto the canvas with layout context or exact coordinates.",
+            description: "Insert a Font Awesome Free (v6) vector icon onto the canvas with layout context or exact coordinates.",
             schema: obj(
                 json!({
-                    "icon_id": s("The icon identifier (e.g. 'lucide:home', 'lucide:settings', 'lucide:star')"),
+                    "icon_id": s("The Font Awesome Free (v6) icon identifier (e.g. 'fa6-solid:house', 'fa6-regular:heart', 'fa6-brands:github')"),
                     "parent_frame_id": s("Optional: The ID of the frame/container where the icon should be placed"),
                     "layout_position": s("Optional layout position relative to elements: 'center', 'top-left', 'top-right', 'bottom-left', 'bottom-right', 'after-text'"),
                     "position": json!({"type": "object", "properties": {"x": n("X coordinate"), "y": n("Y coordinate")}, "description": "Optional exact coordinates"}),
@@ -383,60 +383,57 @@ fn export_without_a_file(s: &mut crate::Session, arguments: &Value) -> Result<Va
     Ok(out)
 }
 
-/// Search curated and online icon collections by keyword.
+/// Search curated and online icon collections by keyword (Font Awesome Free v6).
 fn search_icons(arguments: &Value) -> Result<Value, String> {
     let query = arguments.get("query").and_then(Value::as_str).unwrap_or_default().trim().to_lowercase();
     let catalog = [
-        "lucide:shapes",
-        "lucide:star",
-        "lucide:heart",
-        "lucide:sparkles",
-        "lucide:home",
-        "lucide:file",
-        "lucide:layers",
-        "lucide:settings",
-        "lucide:search",
-        "lucide:user",
-        "lucide:send",
-        "lucide:paperclip",
-        "lucide:check",
-        "lucide:x",
-        "lucide:plus",
-        "lucide:minus",
-        "lucide:timer",
-        "lucide:pause",
-        "lucide:globe",
-        "lucide:lock",
-        "lucide:layout-grid",
-        "lucide:list",
-        "lucide:arrow-down",
-        "lucide:arrow-right",
-        "lucide:arrow-left",
-        "lucide:arrow-up",
-        "lucide:pen",
-        "lucide:pen-tool",
-        "lucide:highlighter",
-        "lucide:git-commit",
-        "lucide:stamp",
-        "lucide:bell",
-        "lucide:image",
-        "lucide:calendar",
-        "lucide:mail",
-        "lucide:trash",
-        "lucide:edit",
-        "lucide:eye",
-        "lucide:shopping-cart",
-        "lucide:credit-card",
-        "lucide:folder",
-        "ph:user",
-        "ph:house",
-        "ph:gear",
-        "ph:magnifying-glass",
-        "ph:heart",
-        "material:home",
-        "material:search",
-        "material:favorite",
-        "material:person",
+        "fa6-solid:house",
+        "fa6-solid:user",
+        "fa6-solid:gear",
+        "fa6-solid:magnifying-glass",
+        "fa6-solid:star",
+        "fa6-solid:heart",
+        "fa6-solid:bell",
+        "fa6-solid:check",
+        "fa6-solid:xmark",
+        "fa6-solid:plus",
+        "fa6-solid:minus",
+        "fa6-solid:arrow-down",
+        "fa6-solid:arrow-right",
+        "fa6-solid:arrow-left",
+        "fa6-solid:arrow-up",
+        "fa6-solid:pen",
+        "fa6-solid:trash",
+        "fa6-solid:envelope",
+        "fa6-solid:calendar",
+        "fa6-solid:cart-shopping",
+        "fa6-solid:credit-card",
+        "fa6-solid:lock",
+        "fa6-solid:globe",
+        "fa6-solid:shapes",
+        "fa6-solid:paperclip",
+        "fa6-solid:share",
+        "fa6-solid:download",
+        "fa6-solid:folder",
+        "fa6-regular:heart",
+        "fa6-regular:star",
+        "fa6-regular:user",
+        "fa6-regular:envelope",
+        "fa6-regular:calendar",
+        "fa6-regular:comment",
+        "fa6-regular:bookmark",
+        "fa6-regular:circle-check",
+        "fa6-regular:clock",
+        "fa6-regular:bell",
+        "fa6-brands:github",
+        "fa6-brands:google",
+        "fa6-brands:twitter",
+        "fa6-brands:facebook",
+        "fa6-brands:apple",
+        "fa6-brands:figma",
+        "fa6-brands:discord",
+        "fa6-brands:linkedin",
+        "fa6-brands:youtube",
     ];
     let matched: Vec<&str> = if query.is_empty() { catalog.to_vec() } else { catalog.into_iter().filter(|id| id.contains(&query)).collect() };
     Ok(json!(matched))
@@ -872,7 +869,7 @@ mod tests {
         let search = table().iter().find(|t| t.name == "search_icons").expect("search_icons tool");
         let results = search.run(&mut s, &json!({"query": "star"})).expect("search runs");
         let list = results.as_array().expect("array of icons");
-        assert!(list.iter().any(|v| v.as_str() == Some("lucide:star")));
+        assert!(list.iter().any(|v| v.as_str() == Some("fa6-solid:star")));
 
         // 2. Add icon tool
         let add = table().iter().find(|t| t.name == "add_icon_to_canvas").expect("add_icon_to_canvas tool");
@@ -880,7 +877,7 @@ mod tests {
             .run(
                 &mut s,
                 &json!({
-                    "icon_id": "lucide:star",
+                    "icon_id": "fa6-solid:star",
                     "parent_frame_id": frame_id,
                     "layout_position": "top-right",
                     "color": "#bfbcfc"
@@ -888,6 +885,6 @@ mod tests {
             )
             .expect("insert runs");
         assert!(inserted.get("id").is_some());
-        assert_eq!(inserted["icon_id"], "lucide:star");
+        assert_eq!(inserted["icon_id"], "fa6-solid:star");
     }
 }

@@ -1,6 +1,6 @@
 /**
  * sycnUI Virtualized Icons Panel Component
- * High-performance 5-column grid supporting 200,000+ Iconify/Lucide icons.
+ * High-performance 5-column grid powered by Font Awesome Free (v6) via Iconify API.
  */
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
@@ -8,7 +8,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { Icon as IconifyIcon } from '@iconify/react';
 import { Search, X, Loader2, Sparkles, AlertCircle } from 'lucide-react';
 import { insertIconToCanvas } from '../utils/insertIconToCanvas';
-import { fetchRawSvg, CURATED_ICON_CATALOG } from '../ai/aiIconTools';
+import { fetchRawSvg, CURATED_FA6_ICONS } from '../ai/aiIconTools';
 
 export interface IconsPanelProps {
   isOpen: boolean;
@@ -19,7 +19,14 @@ export interface IconsPanelProps {
 
 const COLUMNS = 5;
 const ROW_HEIGHT = 52;
-const COLLECTIONS = ['All', 'Lucide', 'Material', 'Phosphor', 'Tabler'];
+
+// Font Awesome Free (v6) collections
+export const POPULAR_COLLECTIONS = [
+  { label: 'All FA', prefix: '' }, // Defaults to searching all
+  { label: 'Solid', prefix: 'fa6-solid' },
+  { label: 'Regular', prefix: 'fa6-regular' },
+  { label: 'Brands', prefix: 'fa6-brands' },
+];
 
 export const IconsPanel: React.FC<IconsPanelProps> = ({
   isOpen,
@@ -28,8 +35,8 @@ export const IconsPanel: React.FC<IconsPanelProps> = ({
   className = '',
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCollection, setSelectedCollection] = useState('All');
-  const [icons, setIcons] = useState<string[]>(CURATED_ICON_CATALOG);
+  const [selectedPrefix, setSelectedPrefix] = useState<string>('');
+  const [icons, setIcons] = useState<string[]>(CURATED_FA6_ICONS);
   const [isLoading, setIsLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
@@ -45,46 +52,57 @@ export const IconsPanel: React.FC<IconsPanelProps> = ({
     }
   }, [isOpen]);
 
-  // Fetch icons from Iconify API based on query & collection
+  // Fetch Font Awesome Free icons from Iconify API based on query & prefix
   const fetchIcons = useCallback(
-    async (query: string, collection: string, pageNum: number, append = false) => {
+    async (query: string, prefix: string, pageNum: number, append = false) => {
       setIsLoading(true);
       const trimmedQuery = query.trim().toLowerCase();
 
       try {
-        let prefixFilter = '';
-        if (collection === 'Lucide') prefixFilter = 'prefix=lucide&';
-        else if (collection === 'Material') prefixFilter = 'prefix=mdi&';
-        else if (collection === 'Phosphor') prefixFilter = 'prefix=ph&';
-        else if (collection === 'Tabler') prefixFilter = 'prefix=tabler&';
+        let endpoint = '';
+        const limit = 100;
+        const start = (pageNum - 1) * limit;
 
-        const endpoint = trimmedQuery
-          ? `https://api.iconify.design/search?query=${encodeURIComponent(
+        if (trimmedQuery) {
+          if (prefix) {
+            endpoint = `https://api.iconify.design/search?query=${encodeURIComponent(
               trimmedQuery
-            )}&${prefixFilter}limit=100&start=${(pageNum - 1) * 100}`
-          : `https://api.iconify.design/collection?${prefixFilter}limit=100`;
+            )}&prefix=${prefix}&limit=${limit}&start=${start}`;
+          } else {
+            endpoint = `https://api.iconify.design/search?query=${encodeURIComponent(
+              trimmedQuery
+            )}&prefixes=fa6-solid,fa6-regular,fa6-brands&limit=${limit}&start=${start}`;
+          }
+        } else {
+          // If no search query, list icons from the chosen collection
+          const activePrefix = prefix || 'fa6-solid';
+          endpoint = `https://api.iconify.design/collection?prefix=${activePrefix}&limit=${limit}`;
+        }
 
         const res = await fetch(endpoint);
         if (res.ok) {
           const data = await res.json();
-          const fetchedIcons: string[] = Array.isArray(data.icons) ? data.icons : [];
+          let fetchedIcons: string[] = [];
+
+          if (Array.isArray(data.icons)) {
+            fetchedIcons = data.icons;
+          } else if (data.uncategorized && Array.isArray(data.uncategorized)) {
+            const p = data.prefix || prefix || 'fa6-solid';
+            fetchedIcons = data.uncategorized.map((name: string) => `${p}:${name}`);
+          }
 
           setIcons((prev) => (append ? [...prev, ...fetchedIcons] : fetchedIcons));
-          setHasMore(fetchedIcons.length >= 100);
+          setHasMore(fetchedIcons.length >= limit);
         } else {
           throw new Error('API response not ok');
         }
       } catch (err) {
         console.warn('[IconsPanel] Iconify API fetch failed, using fallback:', err);
         if (!append) {
-          const filtered = CURATED_ICON_CATALOG.filter((id) => {
+          const filtered = CURATED_FA6_ICONS.filter((id) => {
             const matchesQuery = !trimmedQuery || id.toLowerCase().includes(trimmedQuery);
-            const matchesCol =
-              collection === 'All' ||
-              (collection === 'Lucide' && id.startsWith('lucide:')) ||
-              (collection === 'Material' && id.startsWith('material:')) ||
-              (collection === 'Phosphor' && id.startsWith('ph:'));
-            return matchesQuery && matchesCol;
+            const matchesPrefix = !prefix || id.startsWith(`${prefix}:`);
+            return matchesQuery && matchesPrefix;
           });
           setIcons(filtered);
           setHasMore(false);
@@ -100,10 +118,10 @@ export const IconsPanel: React.FC<IconsPanelProps> = ({
   useEffect(() => {
     const timer = setTimeout(() => {
       setPage(1);
-      fetchIcons(searchQuery, selectedCollection, 1, false);
+      fetchIcons(searchQuery, selectedPrefix, 1, false);
     }, 250);
     return () => clearTimeout(timer);
-  }, [searchQuery, selectedCollection, fetchIcons]);
+  }, [searchQuery, selectedPrefix, fetchIcons]);
 
   // Handle infinite scrolling
   const handleScroll = useCallback(() => {
@@ -112,9 +130,9 @@ export const IconsPanel: React.FC<IconsPanelProps> = ({
     if (scrollTop + clientHeight >= scrollHeight - 120) {
       const nextPage = page + 1;
       setPage(nextPage);
-      fetchIcons(searchQuery, selectedCollection, nextPage, true);
+      fetchIcons(searchQuery, selectedPrefix, nextPage, true);
     }
-  }, [isLoading, hasMore, page, searchQuery, selectedCollection, fetchIcons]);
+  }, [isLoading, hasMore, page, searchQuery, selectedPrefix, fetchIcons]);
 
   // Handle icon insertion
   const handleInsert = async (iconId: string) => {
@@ -150,14 +168,14 @@ export const IconsPanel: React.FC<IconsPanelProps> = ({
   return (
     <aside
       className={`w-72 h-full flex flex-col bg-white dark:bg-[#1e1e1e] border-r border-gray-200 dark:border-[#333333] select-none text-sm z-20 ${className}`}
-      aria-label="Icons Library"
+      aria-label="Font Awesome Icons Library"
       role="region"
     >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-[#333333]">
         <div className="flex items-center space-x-2">
           <Sparkles className="w-4 h-4 text-indigo-500" />
-          <h2 className="font-semibold text-gray-800 dark:text-gray-100">Icons</h2>
+          <h2 className="font-semibold text-gray-800 dark:text-gray-100">Font Awesome Free</h2>
           <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 font-mono">
             {icons.length > 0 ? `${icons.length}+` : '0'}
           </span>
@@ -182,9 +200,9 @@ export const IconsPanel: React.FC<IconsPanelProps> = ({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search 200,000+ icons..."
+            placeholder="Search Font Awesome Free (v6)..."
             className="w-full pl-9 pr-8 py-1.5 bg-gray-50 dark:bg-[#282828] border border-gray-200 dark:border-[#404040] rounded-md text-xs text-gray-800 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-            aria-label="Search icons"
+            aria-label="Search Font Awesome icons"
           />
           {searchQuery && (
             <button
@@ -198,21 +216,21 @@ export const IconsPanel: React.FC<IconsPanelProps> = ({
         </div>
       </div>
 
-      {/* Collection Chips */}
+      {/* Font Awesome Category Filter Chips */}
       <div className="px-3 pb-2 flex items-center space-x-1.5 overflow-x-auto no-scrollbar">
-        {COLLECTIONS.map((col) => {
-          const isActive = selectedCollection === col;
+        {POPULAR_COLLECTIONS.map((col) => {
+          const isActive = selectedPrefix === col.prefix;
           return (
             <button
-              key={col}
-              onClick={() => setSelectedCollection(col)}
+              key={col.label}
+              onClick={() => setSelectedPrefix(col.prefix)}
               className={`px-2.5 py-1 text-xs font-medium rounded-full whitespace-nowrap transition-colors ${
                 isActive
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'bg-gray-100 dark:bg-[#282828] text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
               }`}
             >
-              {col}
+              {col.label}
             </button>
           );
         })}
@@ -225,13 +243,13 @@ export const IconsPanel: React.FC<IconsPanelProps> = ({
         className="flex-1 overflow-y-auto px-3 py-1 outline-none"
         tabIndex={0}
         role="grid"
-        aria-label="Icons Grid"
+        aria-label="Font Awesome Icons Grid"
       >
         {icons.length === 0 && !isLoading ? (
           <div className="flex flex-col items-center justify-center h-48 text-center px-4 text-gray-400">
             <AlertCircle className="w-8 h-8 mb-2 stroke-1 text-gray-400" />
-            <p className="font-medium text-xs text-gray-600 dark:text-gray-300">No icons found</p>
-            <p className="text-[11px] mt-1 text-gray-400">Try searching for keywords like "arrow", "user", or "star"</p>
+            <p className="font-medium text-xs text-gray-600 dark:text-gray-300">No Font Awesome icons found</p>
+            <p className="text-[11px] mt-1 text-gray-400">Try searching for keywords like "house", "user", "heart", or "bell"</p>
           </div>
         ) : (
           <div
@@ -302,7 +320,7 @@ export const IconsPanel: React.FC<IconsPanelProps> = ({
         {isLoading && (
           <div className="flex items-center justify-center py-4 space-x-2 text-xs text-gray-400">
             <Loader2 className="w-4 h-4 animate-spin text-indigo-500" />
-            <span>Loading icons...</span>
+            <span>Loading Font Awesome icons...</span>
           </div>
         )}
       </div>

@@ -12,36 +12,36 @@ use crate::theme::{Tokens, regular};
 const ICON_SIZE: f32 = 38.0;
 const ICON_GAP: f32 = 6.0;
 
-/// Built-in curated icon catalog for instant offline canvas insertion
+/// Built-in curated icon catalog for instant offline canvas insertion (Font Awesome Free v6)
 const CURATED_ICONS: [(&str, Icon, &str); 28] = [
-    ("Shapes", Icon::Shapes, "lucide:shapes"),
-    ("Star", Icon::Star, "lucide:star"),
-    ("Heart", Icon::Reaction, "lucide:heart"),
-    ("Sparkles", Icon::Sparkle, "lucide:sparkles"),
-    ("Home", Icon::Home, "lucide:home"),
-    ("File", Icon::Page, "lucide:file"),
-    ("Layers", Icon::Assets, "lucide:layers"),
-    ("Settings", Icon::Adjust, "lucide:settings"),
-    ("Search", Icon::Search, "lucide:search"),
-    ("Comment", Icon::Comment, "lucide:message-square"),
-    ("Send", Icon::Send, "lucide:send"),
-    ("Clip", Icon::Clip, "lucide:paperclip"),
-    ("Check", Icon::Check, "lucide:check"),
-    ("Close", Icon::Close, "lucide:x"),
-    ("Plus", Icon::Plus, "lucide:plus"),
-    ("Minus", Icon::Minus, "lucide:minus"),
-    ("Timer", Icon::Timer, "lucide:timer"),
-    ("Pause", Icon::Pause, "lucide:pause"),
-    ("Globe", Icon::Online, "lucide:globe"),
-    ("Lock", Icon::LivePrivate, "lucide:lock"),
-    ("Grid", Icon::ViewGrid, "lucide:layout-grid"),
-    ("List", Icon::ViewList, "lucide:list"),
-    ("Arrow Down", Icon::ArrowDown, "lucide:arrow-down"),
-    ("Pen", Icon::PenNib, "lucide:pen"),
-    ("Marker", Icon::Marker, "lucide:pen-tool"),
-    ("Highlighter", Icon::Highlighter, "lucide:highlighter"),
-    ("Connector", Icon::Connector, "lucide:git-commit"),
-    ("Stamp", Icon::Stamp, "lucide:stamp"),
+    ("Shapes", Icon::Shapes, "fa6-solid:shapes"),
+    ("Star", Icon::Star, "fa6-solid:star"),
+    ("Heart", Icon::Reaction, "fa6-solid:heart"),
+    ("Sparkles", Icon::Sparkle, "fa6-solid:wand-magic-sparkles"),
+    ("Home", Icon::Home, "fa6-solid:house"),
+    ("File", Icon::Page, "fa6-solid:file"),
+    ("Layers", Icon::Assets, "fa6-solid:layer-group"),
+    ("Settings", Icon::Adjust, "fa6-solid:gear"),
+    ("Search", Icon::Search, "fa6-solid:magnifying-glass"),
+    ("Comment", Icon::Comment, "fa6-solid:comment"),
+    ("Send", Icon::Send, "fa6-solid:paper-plane"),
+    ("Clip", Icon::Clip, "fa6-solid:paperclip"),
+    ("Check", Icon::Check, "fa6-solid:check"),
+    ("Close", Icon::Close, "fa6-solid:xmark"),
+    ("Plus", Icon::Plus, "fa6-solid:plus"),
+    ("Minus", Icon::Minus, "fa6-solid:minus"),
+    ("Timer", Icon::Timer, "fa6-solid:stopwatch"),
+    ("Pause", Icon::Pause, "fa6-solid:pause"),
+    ("Globe", Icon::Online, "fa6-solid:globe"),
+    ("Lock", Icon::LivePrivate, "fa6-solid:lock"),
+    ("Grid", Icon::ViewGrid, "fa6-solid:table-cells-large"),
+    ("List", Icon::ViewList, "fa6-solid:list"),
+    ("Arrow Down", Icon::ArrowDown, "fa6-solid:arrow-down"),
+    ("Pen", Icon::PenNib, "fa6-solid:pen"),
+    ("Marker", Icon::Marker, "fa6-solid:pen-nib"),
+    ("Highlighter", Icon::Highlighter, "fa6-solid:highlighter"),
+    ("Connector", Icon::Connector, "fa6-solid:code-commit"),
+    ("Stamp", Icon::Stamp, "fa6-solid:stamp"),
 ];
 
 /// Draw the Icons sidebar panel.
@@ -52,8 +52,13 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     // 1. Search Bar
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
-        let resp =
-            crate::widgets::text_input(ui, Id::unique("icons_panel_search"), &mut search, ui.available_width() - 8.0, tr("Search 200,000+ icons..."));
+        let resp = crate::widgets::text_input(
+            ui,
+            Id::unique("icons_panel_search"),
+            &mut search,
+            ui.available_width() - 8.0,
+            tr("Search Font Awesome Free (v6)..."),
+        );
         if resp.changed() {
             app.ui.icons_query = search.clone();
         }
@@ -61,12 +66,12 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
 
     ui.add_space(6.0);
 
-    // 2. Filter collection chips
+    // 2. Filter collection chips (Font Awesome Free v6 categories)
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
-        let collections = ["All", "Lucide", "Material", "Phosphor", "Tabler"];
+        let collections = ["All FA", "Solid", "Regular", "Brands"];
         for col in collections {
-            let active = app.ui.icons_collection == col || (col == "All" && app.ui.icons_collection.is_empty());
+            let active = app.ui.icons_collection == col || (col == "All FA" && app.ui.icons_collection.is_empty());
             let fill = if active { t.accent_on } else { t.hover };
             let text_color = if active { t.accent_text } else { t.text };
             let chip_r =
@@ -78,7 +83,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             }
             ui.painter().text(chip_r.rect.center(), Align2::CENTER_CENTER, col, regular(11.0), text_color);
             if chip_r.clicked() {
-                app.ui.icons_collection = if col == "All" { String::new() } else { col.to_string() };
+                app.ui.icons_collection = if col == "All FA" { String::new() } else { col.to_string() };
             }
         }
     });
