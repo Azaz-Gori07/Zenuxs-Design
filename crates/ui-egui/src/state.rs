@@ -11,6 +11,7 @@ pub enum RightTab {
 pub enum LeftTab {
     File,
     Assets,
+    Icons,
 }
 
 /// The window's title bar.

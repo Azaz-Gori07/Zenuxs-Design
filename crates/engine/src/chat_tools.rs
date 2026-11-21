@@ -33,7 +33,9 @@ pub fn instead_of(name: &str) -> String {
     let has = |words: &[&str]| words.iter().any(|w| n.contains(w));
     // The image arm comes first: "get_image" and "find_photo" also read as lookups, and a model
     // told to call `get_node` for a picture goes looking for a file on disk instead.
-    let right = if has(&["image", "images", "photo", "photos", "picture", "stock", "asset"]) {
+    let right = if has(&["icon", "icons", "symbol", "symbols"]) {
+        "search_icons (to search icons by query) or add_icon_to_canvas (to place a vector icon on canvas)"
+    } else if has(&["image", "images", "photo", "photos", "picture", "stock", "asset"]) {
         "source_image, which searches the public libraries that need no key and places what the Vision model approves — one call for every image slot on the screen"
     } else if has(&["font", "fonts", "typeface"]) {
         "set_properties with `fontFamily: \"Name\"` on text layers (or run_command `text.loadFont` with `family` or `data`)"
@@ -98,6 +100,8 @@ impl ChatTool {
             (None, "list_commands") => Ok(Value::String(list_commands(arguments))),
             (None, "props_reference") => Ok(Value::String(props_reference(arguments))),
             (None, "inspect_document") => inspect(s, arguments),
+            (None, "search_icons") => search_icons(arguments),
+            (None, "add_icon_to_canvas") => add_icon_to_canvas(s, arguments),
             // `screenshot` and `review_design` render the document and hand the pixels to the
             // Vision model, which needs the network: `chat.rs` runs those on its worker with a
             // media session. Answered here only when something calls them without one.
@@ -331,6 +335,28 @@ static TABLE: std::sync::LazyLock<Vec<ChatTool>> = std::sync::LazyLock::new(|| {
             ),
             command: None,
         },
+        ChatTool {
+            name: "search_icons",
+            description: "Search 200,000+ vector icons (Iconify, Lucide, Phosphor, Material). Returns a list of matching icon identifiers.",
+            schema: obj(json!({"query": s("The icon name, keyword, or category (e.g. 'home', 'user', 'settings', 'arrow')")}), &["query"]),
+            command: None,
+        },
+        ChatTool {
+            name: "add_icon_to_canvas",
+            description: "Insert a vector icon onto the canvas with layout context or exact coordinates.",
+            schema: obj(
+                json!({
+                    "icon_id": s("The icon identifier (e.g. 'lucide:home', 'lucide:settings', 'lucide:star')"),
+                    "parent_frame_id": s("Optional: The ID of the frame/container where the icon should be placed"),
+                    "layout_position": s("Optional layout position relative to elements: 'center', 'top-left', 'top-right', 'bottom-left', 'bottom-right', 'after-text'"),
+                    "position": json!({"type": "object", "properties": {"x": n("X coordinate"), "y": n("Y coordinate")}, "description": "Optional exact coordinates"}),
+                    "color": s("Optional icon color (hex, rgba, or CSS color). Defaults to current theme text/foreground color"),
+                    "size": n("Optional icon size in px (default 24)"),
+                }),
+                &["icon_id"],
+            ),
+            command: None,
+        },
     ]
 });
 
@@ -355,6 +381,142 @@ fn export_without_a_file(s: &mut crate::Session, arguments: &Value) -> Result<Va
         ));
     }
     Ok(out)
+}
+
+/// Search curated and online icon collections by keyword.
+fn search_icons(arguments: &Value) -> Result<Value, String> {
+    let query = arguments.get("query").and_then(Value::as_str).unwrap_or_default().trim().to_lowercase();
+    let catalog = [
+        "lucide:shapes",
+        "lucide:star",
+        "lucide:heart",
+        "lucide:sparkles",
+        "lucide:home",
+        "lucide:file",
+        "lucide:layers",
+        "lucide:settings",
+        "lucide:search",
+        "lucide:user",
+        "lucide:send",
+        "lucide:paperclip",
+        "lucide:check",
+        "lucide:x",
+        "lucide:plus",
+        "lucide:minus",
+        "lucide:timer",
+        "lucide:pause",
+        "lucide:globe",
+        "lucide:lock",
+        "lucide:layout-grid",
+        "lucide:list",
+        "lucide:arrow-down",
+        "lucide:arrow-right",
+        "lucide:arrow-left",
+        "lucide:arrow-up",
+        "lucide:pen",
+        "lucide:pen-tool",
+        "lucide:highlighter",
+        "lucide:git-commit",
+        "lucide:stamp",
+        "lucide:bell",
+        "lucide:image",
+        "lucide:calendar",
+        "lucide:mail",
+        "lucide:trash",
+        "lucide:edit",
+        "lucide:eye",
+        "lucide:shopping-cart",
+        "lucide:credit-card",
+        "lucide:folder",
+        "ph:user",
+        "ph:house",
+        "ph:gear",
+        "ph:magnifying-glass",
+        "ph:heart",
+        "material:home",
+        "material:search",
+        "material:favorite",
+        "material:person",
+    ];
+    let matched: Vec<&str> = if query.is_empty() { catalog.to_vec() } else { catalog.into_iter().filter(|id| id.contains(&query)).collect() };
+    Ok(json!(matched))
+}
+
+/// Insert an icon as a vector node onto the canvas with context-aware placement.
+fn add_icon_to_canvas(s: &mut crate::Session, arguments: &Value) -> Result<Value, String> {
+    let icon_id = arguments.get("icon_id").and_then(Value::as_str).unwrap_or_default();
+    if icon_id.is_empty() {
+        return Err("`icon_id` is required".into());
+    }
+    let parent =
+        arguments.get("parent_frame_id").and_then(|v| if let Some(i) = v.as_i64() { Some(i.to_string()) } else { v.as_str().map(str::to_string) });
+
+    let layout_pos = arguments.get("layout_position").and_then(Value::as_str).unwrap_or("center");
+    let (mut x, mut y) = (20.0, 20.0);
+    if let Some(pos) = arguments.get("position") {
+        x = pos.get("x").and_then(Value::as_f64).unwrap_or(x);
+        y = pos.get("y").and_then(Value::as_f64).unwrap_or(y);
+    } else {
+        match layout_pos {
+            "top-left" => {
+                x = 16.0;
+                y = 16.0;
+            }
+            "top-right" => {
+                x = 200.0;
+                y = 16.0;
+            }
+            "center" => {
+                x = 100.0;
+                y = 100.0;
+            }
+            "bottom-left" => {
+                x = 16.0;
+                y = 200.0;
+            }
+            "bottom-right" => {
+                x = 200.0;
+                y = 200.0;
+            }
+            "after-text" => {
+                x = 120.0;
+                y = 24.0;
+            }
+            _ => {
+                x = 20.0;
+                y = 20.0;
+            }
+        }
+    }
+
+    let size = arguments.get("size").and_then(Value::as_f64).unwrap_or(24.0);
+    let color = arguments.get("color").and_then(Value::as_str).unwrap_or("#000000");
+
+    let mut create_params = json!({
+        "type": "frame",
+        "name": format!("Icon / {icon_id}"),
+        "x": x,
+        "y": y,
+        "width": size,
+        "height": size,
+        "props": {
+            "fills": [{"type": "solid", "color": format!("{color}18")}],
+            "cornerRadius": 4.0,
+        }
+    });
+
+    if let (Some(p), Some(obj)) = (parent, create_params.as_object_mut()) {
+        obj.insert("parent".into(), json!(p));
+    }
+
+    let out = s.execute_as(Some("AI"), "node.create", &create_params).map_err(|e| e.to_string())?;
+    Ok(json!({
+        "id": out.get("id"),
+        "icon_id": icon_id,
+        "status": "inserted",
+        "x": x,
+        "y": y
+    }))
 }
 
 /// `list_commands`' answer: one compact line per command, narrowed by `filter`.
@@ -697,5 +859,35 @@ mod tests {
         let read = table().iter().find(|t| t.name == "inspect_document").expect("inspect_document is a tool");
         assert!(read.run(&mut s, &json!({})).is_ok());
         assert!(read.run(&mut s, &json!({"outline": true})).is_ok());
+    }
+
+    #[test]
+    fn icon_tools_search_and_add_to_canvas() {
+        let mut s = crate::Session::empty();
+        let _ = s.execute("file.new", &json!({}));
+        let frame = s.execute("node.create", &json!({"type": "frame", "width": 400, "height": 400})).expect("a frame");
+        let frame_id = frame["id"].as_i64().expect("frame id");
+
+        // 1. Search tool
+        let search = table().iter().find(|t| t.name == "search_icons").expect("search_icons tool");
+        let results = search.run(&mut s, &json!({"query": "star"})).expect("search runs");
+        let list = results.as_array().expect("array of icons");
+        assert!(list.iter().any(|v| v.as_str() == Some("lucide:star")));
+
+        // 2. Add icon tool
+        let add = table().iter().find(|t| t.name == "add_icon_to_canvas").expect("add_icon_to_canvas tool");
+        let inserted = add
+            .run(
+                &mut s,
+                &json!({
+                    "icon_id": "lucide:star",
+                    "parent_frame_id": frame_id,
+                    "layout_position": "top-right",
+                    "color": "#bfbcfc"
+                }),
+            )
+            .expect("insert runs");
+        assert!(inserted.get("id").is_some());
+        assert_eq!(inserted["icon_id"], "lucide:star");
     }
 }

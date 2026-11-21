@@ -352,6 +352,7 @@ pub use panels::dev_compare;
 pub use panels::dev_mode;
 pub use panels::export_panel;
 pub use panels::frame_presets;
+pub use panels::icons_panel;
 pub use panels::layers;
 pub use panels::layout_panel;
 pub use panels::list_drag;
@@ -667,6 +668,9 @@ pub struct UiState {
     /// Save was answered: the files save next frame, once a panel field the click took the
     /// keyboard from has committed what was typed (as [`UiState::after_field`]).
     pub save_on_close: bool,
+    /// Icons panel search query and active collection filter.
+    pub icons_query: String,
+    pub icons_collection: String,
 }
 
 impl Default for UiState {
@@ -677,6 +681,8 @@ impl Default for UiState {
         Self {
             left_width: PANEL_DEFAULT,
             right_width: PANEL_DEFAULT,
+            icons_query: String::new(),
+            icons_collection: String::new(),
             right_panel_rect: None,
             right_tab: RightTab::Design,
             last_right_tab: RightTab::Design,

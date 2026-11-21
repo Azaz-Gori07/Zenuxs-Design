@@ -4,6 +4,7 @@ pub mod dev_compare;
 pub mod dev_mode;
 pub mod export_panel;
 pub mod frame_presets;
+pub mod icons_panel;
 pub mod layers;
 pub mod layout_panel;
 pub mod list_drag;
