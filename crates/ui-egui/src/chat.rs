@@ -4232,4 +4232,367 @@ mod tests {
         let out = u.app.session.execute("ai.usage", &json!({})).expect("the usage is answered");
         assert_eq!(out["requests"], 1);
     }
+
+    #[test]
+    fn three_prompts_pure_product_spec_verification() {
+        use figcraft_ai::{AssetSearchOptions, AssetSearchOutcome, BoxFuture, MediaFactory, MediaSession, StockPhoto};
+        use std::sync::{Arc, Mutex};
+
+        // =========================================================================
+        // PROMPT 1: E-Commerce Storefront (Pure product details, zero design hints)
+        // =========================================================================
+        let p1 = "We sell artisanal roasted whole bean coffee and pour-over brewing equipment online under the brand name 'Roast & Bloom'. We offer an Ethiopian Yirgacheffe single-origin bag, a Colombia Supremo bag, a ceramic dripper, and a monthly bean subscription. Make the web app UI for our store.";
+
+        let mut u1 = chat_ui();
+        u1.app.session.execute("ai.chat.send", &json!({"text": p1})).expect("prompt 1 queued");
+        send_pending(&mut u1.app).expect("prompt 1 starts");
+
+        let msgs1 = u1.app.session.chat_messages();
+        let user_msg1 = &msgs1.last().expect("last message").content;
+
+        // Check 1: Did it automatically activate skills?
+        assert!(user_msg1.contains("[Design skills activated for this request]"), "P1: Skills block missing");
+        assert!(user_msg1.contains("design.product-site"), "P1: Expected design.product-site skill, got: {user_msg1}");
+
+        // Check 2 & 3: Automatic image slot usage & content relevance verification
+        struct VerifyingSession {
+            verified_count: Arc<Mutex<usize>>,
+            rejected_count: Arc<Mutex<usize>>,
+        }
+        impl MediaSession for VerifyingSession {
+            fn search_assets<'a>(&'a mut self, _: &'a str, _: &'a AssetSearchOptions) -> BoxFuture<'a, Vec<AssetSearchOutcome>> {
+                Box::pin(async { Vec::new() })
+            }
+            fn stock_photo<'a>(&'a mut self, _: &'a str, _: figcraft_ai::Orientation, _: usize) -> BoxFuture<'a, Result<StockPhoto, TransportError>> {
+                Box::pin(async { Err(TransportError::Other("no stock key".into())) })
+            }
+            fn download<'a>(&'a mut self, _: &'a str) -> BoxFuture<'a, Result<Vec<u8>, TransportError>> {
+                Box::pin(async { Ok(vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) })
+            }
+            fn inspect_image<'a>(&'a mut self, _: &'a [u8], _: &'a str, prompt: &'a str) -> BoxFuture<'a, Result<String, TransportError>> {
+                if prompt.to_lowercase().contains("coffee") || prompt.to_lowercase().contains("dripper") {
+                    *self.verified_count.lock().expect("lock") += 1;
+                    Box::pin(async {
+                        Ok(r#"{"approved": true, "relevance_score": 0.95, "matched_requirements": ["coffee subject"], "failed_requirements": [], "reason": "Accurate whole bean coffee pack"}"#.into())
+                    })
+                } else {
+                    *self.rejected_count.lock().expect("lock") += 1;
+                    Box::pin(async {
+                        Ok(r#"{"approved": false, "relevance_score": 0.1, "matched_requirements": [], "failed_requirements": ["subject mismatch"], "reason": "Image does not depict coffee"}"#.into())
+                    })
+                }
+            }
+            fn generate_image<'a>(&'a mut self, _: &'a str, _: figcraft_ai::Orientation) -> BoxFuture<'a, Result<Vec<u8>, TransportError>> {
+                Box::pin(async { Ok(vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) })
+            }
+            fn vectorize<'a>(&'a mut self, _: &'a [u8]) -> BoxFuture<'a, Result<String, TransportError>> {
+                Box::pin(async { Err(TransportError::Other("no".into())) })
+            }
+            fn remove_background<'a>(&'a mut self, _: &'a [u8]) -> BoxFuture<'a, Result<Vec<u8>, TransportError>> {
+                Box::pin(async { Err(TransportError::Other("no".into())) })
+            }
+        }
+
+        let verified_counter = Arc::new(Mutex::new(0));
+        let rejected_counter = Arc::new(Mutex::new(0));
+
+        struct VerifyingFactory {
+            verified: Arc<Mutex<usize>>,
+            rejected: Arc<Mutex<usize>>,
+        }
+        impl MediaFactory for VerifyingFactory {
+            fn make(
+                &self,
+                _: Option<String>,
+                _: Option<String>,
+                _: Option<figcraft_ai::VisionConfig>,
+                _: Option<(figcraft_ai::VectorizeProvider, String)>,
+            ) -> Box<dyn MediaSession> {
+                Box::new(VerifyingSession { verified_count: self.verified.clone(), rejected_count: self.rejected.clone() })
+            }
+        }
+
+        let factory = VerifyingFactory { verified: verified_counter.clone(), rejected: rejected_counter.clone() };
+
+        // Parallel multi-slot source_image call (coffee + dripper + invalid tractor test)
+        let multi_slot_batch = json!({
+            "requests": [
+                {"id": "slot_coffee_1", "subject": "Ethiopian Yirgacheffe whole bean coffee bag", "query": "coffee bag", "must_generate": true},
+                {"id": "slot_dripper_2", "subject": "Ceramic pour-over coffee dripper", "query": "pour over dripper", "must_generate": true},
+                {"id": "slot_mismatch_3", "subject": "Tractor on farm", "query": "tractor", "must_generate": true}
+            ]
+        });
+
+        let vision_cfg = figcraft_ai::VisionConfig {
+            base_url: "http://127.0.0.1:20129/v1".into(),
+            api_key: "public".into(),
+            protocol: figcraft_ai::providers::Protocol::Openai,
+            model: "deepseek-v4.1-flash-free".into(),
+        };
+
+        let source_resp =
+            figcraft_ai::media::block_on(super::source_image(&factory, &(Some("gen-key".into()), None, Some(vision_cfg), None), &multi_slot_batch));
+        let batch_result: Value = serde_json::from_str(&source_resp).expect("valid JSON response");
+
+        // Assert parallel verification: 2 approved, 1 rejected
+        assert_eq!(batch_result["applied"], 2, "Only content-verified images should be placed");
+        assert_eq!(batch_result["results"][0]["state"], "verified");
+        assert_eq!(batch_result["results"][1]["state"], "verified");
+        assert_eq!(batch_result["results"][2]["state"], "no-verified-match");
+        assert!(*verified_counter.lock().expect("lock") >= 2);
+        assert!(*rejected_counter.lock().expect("lock") >= 1);
+
+        // Check 4: Post-design review loop (layout.audit)
+        let page = u1
+            .app
+            .run(
+                "node.create",
+                json!({"type": "frame", "x": 0, "y": 0, "width": 1280, "height": 860, "name": "Storefront", "props": {"fills": ["#FAFAF9"]}}),
+            )
+            .expect("storefront frame");
+        let page_id = page["id"].clone();
+
+        u1.app.run("text.create", json!({"parent": page_id, "x": 60, "y": 40, "characters": "Roast & Bloom · Artisan Coffee Co.", "props": {"fontSize": 32, "fills": ["#292524"]}})).expect("p1 h1");
+        u1.app.run("text.create", json!({"parent": page_id, "x": 60, "y": 85, "characters": "Single-Origin Beans & Precision Brewing Gear", "props": {"fontSize": 16, "fills": ["#78716C"]}})).expect("p1 h2");
+
+        // Product Card 1
+        let p_card1 = u1.app.run("node.create", json!({"type": "frame", "parent": page_id, "x": 60, "y": 140, "width": 260, "height": 380, "name": "Card·Ethiopian", "props": {"fills": ["#FFFFFF"], "cornerRadius": 16}})).expect("pcard1");
+        let pc1_id = p_card1["id"].clone();
+        u1.app.run("node.create", json!({"type": "rectangle", "parent": pc1_id, "x": 16, "y": 16, "width": 228, "height": 200, "name": "IMG·coffee-ethiopian", "props": {"fills": ["#E7E5E4"], "cornerRadius": 12}})).expect("slot1");
+        u1.app.run("text.create", json!({"parent": pc1_id, "x": 16, "y": 230, "characters": "Ethiopian Yirgacheffe\nNotes: Jasmine & Citrus · $22", "props": {"fontSize": 15, "fills": ["#292524"]}})).expect("pc1 t");
+
+        // Product Card 2
+        let p_card2 = u1.app.run("node.create", json!({"type": "frame", "parent": page_id, "x": 350, "y": 140, "width": 260, "height": 380, "name": "Card·CeramicDripper", "props": {"fills": ["#FFFFFF"], "cornerRadius": 16}})).expect("pcard2");
+        let pc2_id = p_card2["id"].clone();
+        u1.app.run("node.create", json!({"type": "rectangle", "parent": pc2_id, "x": 16, "y": 16, "width": 228, "height": 200, "name": "IMG·ceramic-dripper", "props": {"fills": ["#E7E5E4"], "cornerRadius": 12}})).expect("slot2");
+        u1.app.run("text.create", json!({"parent": pc2_id, "x": 16, "y": 230, "characters": "Ceramic Pour-Over Dripper\nMatte Off-White · $34", "props": {"fontSize": 15, "fills": ["#292524"]}})).expect("pc2 t");
+
+        // Product Card 3
+        let p_card3 = u1.app.run("node.create", json!({"type": "frame", "parent": page_id, "x": 640, "y": 140, "width": 260, "height": 380, "name": "Card·ColombiaSupremo", "props": {"fills": ["#FFFFFF"], "cornerRadius": 16}})).expect("pcard3");
+        let pc3_id = p_card3["id"].clone();
+        u1.app.run("node.create", json!({"type": "rectangle", "parent": pc3_id, "x": 16, "y": 16, "width": 228, "height": 200, "name": "IMG·colombia-supremo", "props": {"fills": ["#E7E5E4"], "cornerRadius": 12}})).expect("slot3");
+        u1.app.run("text.create", json!({"parent": pc3_id, "x": 16, "y": 230, "characters": "Colombia Supremo\nNotes: Caramel & Cacao · $19", "props": {"fontSize": 15, "fills": ["#292524"]}})).expect("pc3 t");
+
+        // Product Card 4 - Subscription
+        let p_card4 = u1.app.run("node.create", json!({"type": "frame", "parent": page_id, "x": 930, "y": 140, "width": 290, "height": 380, "name": "Card·Subscription", "props": {"fills": ["#1C1917"], "cornerRadius": 16}})).expect("pcard4");
+        let pc4_id = p_card4["id"].clone();
+        u1.app.run("text.create", json!({"parent": pc4_id, "x": 20, "y": 30, "characters": "Monthly Bean Club\n2 Fresh Roasts Monthly\nCurated Origins + Free Filter Kit\n\n$38 / month", "props": {"fontSize": 16, "fills": ["#FAFAF9"]}})).expect("pc4 t");
+
+        let blockers = audit_blockers(&mut u1.app).expect("Audit must detect empty slot defect");
+        assert!(blockers.contains("empty-slot"), "Audit must flag empty slot: {blockers}");
+        assert!(blockers.contains("IMG·coffee-ethiopian"));
+        assert!(blockers.contains("source_image"), "Audit fix must instruct model to call source_image");
+
+        // =========================================================================
+        // PROMPT 2: Mobile App, Prototype Coordinates, Behaviors & Motion
+        // =========================================================================
+        let p2 = "We have a mobile app called ZenStep for daily mindfulness and hydration. The user has a daily checklist on the main screen with habits like Morning Meditation and Drink 2L Water, showing their streak, and can tap Morning Meditation to open the habit detail screen with a weekly completion tracker and a 'Mark Done' button that returns to the list. Make the mobile app UI with the interactive prototype flow between these screens.";
+
+        let mut u2 = chat_ui();
+        u2.app.session.execute("ai.chat.send", &json!({"text": p2})).expect("prompt 2 queued");
+        send_pending(&mut u2.app).expect("prompt 2 starts");
+
+        let msgs2 = u2.app.session.chat_messages();
+        let user_msg2 = &msgs2.last().expect("last message").content;
+
+        // Check skills for mobile & prototype
+        assert!(user_msg2.contains("design.mobile"), "P2: Expected design.mobile skill: {user_msg2}");
+        assert!(user_msg2.contains("prototype.navigation"), "P2: Expected prototype.navigation skill: {user_msg2}");
+
+        // Verify prototype creation: Flow starting point, source coords -> dest coords, behavior, and motion transition
+        let home_frame = u2.app.run("node.create", json!({"type": "frame", "x": 0, "y": 0, "width": 393, "height": 852, "name": "ZenStep Home Checklist", "props": {"fills": ["#0B0F19"]}})).expect("home frame");
+        let home_id = home_frame["id"].as_i64().expect("id");
+
+        let detail_frame = u2.app.run("node.create", json!({"type": "frame", "x": 450, "y": 0, "width": 393, "height": 852, "name": "Habit Detail - Meditation", "props": {"fills": ["#0B0F19"]}})).expect("detail frame");
+        let detail_id = detail_frame["id"].as_i64().expect("id");
+
+        // Home screen content
+        u2.app.run("text.create", json!({"parent": home_id, "x": 24, "y": 60, "characters": "Today · 7 Day Streak 🔥", "props": {"fontSize": 24, "fills": ["#FFFFFF"]}})).expect("h text");
+        u2.app.run("text.create", json!({"parent": home_id, "x": 24, "y": 100, "characters": "Daily Habits Checklist", "props": {"fontSize": 15, "fills": ["#94A3B8"]}})).expect("sub text");
+
+        let habit_button = u2
+            .app
+            .run(
+                "node.create",
+                json!({
+                    "type": "frame", "parent": home_id, "x": 24, "y": 140, "width": 345, "height": 72, "name": "HabitCard·Meditation",
+                    "props": {"fills": ["#1E293B"], "cornerRadius": 16}
+                }),
+            )
+            .expect("habit card");
+        let button_id = habit_button["id"].as_i64().expect("button id");
+        u2.app.run("text.create", json!({"parent": button_id, "x": 20, "y": 26, "characters": "🧘 Morning Meditation (15 min)", "props": {"fontSize": 16, "fills": ["#F1F5F9"]}})).expect("btn text");
+
+        let habit_2 = u2
+            .app
+            .run(
+                "node.create",
+                json!({
+                    "type": "frame", "parent": home_id, "x": 24, "y": 224, "width": 345, "height": 72, "name": "HabitCard·Water",
+                    "props": {"fills": ["#1E293B"], "cornerRadius": 16}
+                }),
+            )
+            .expect("habit 2");
+        let h2_id = habit_2["id"].clone();
+        u2.app.run("text.create", json!({"parent": h2_id, "x": 20, "y": 26, "characters": "💧 Drink 2L Water (1.2L done)", "props": {"fontSize": 16, "fills": ["#F1F5F9"]}})).expect("h2 text");
+
+        // Detail screen content
+        u2.app
+            .run(
+                "text.create",
+                json!({"parent": detail_id, "x": 24, "y": 60, "characters": "Morning Meditation", "props": {"fontSize": 24, "fills": ["#FFFFFF"]}}),
+            )
+            .expect("d title");
+        u2.app.run("text.create", json!({"parent": detail_id, "x": 24, "y": 100, "characters": "Weekly Completion: 6 / 7 Days", "props": {"fontSize": 15, "fills": ["#38BDF8"]}})).expect("d tracker");
+
+        let chart = u2
+            .app
+            .run(
+                "node.create",
+                json!({
+                    "type": "frame", "parent": detail_id, "x": 24, "y": 140, "width": 345, "height": 180, "name": "Chart·WeeklyCompletion",
+                    "props": {"fills": ["#1E293B"], "cornerRadius": 16}
+                }),
+            )
+            .expect("chart");
+        let chart_id = chart["id"].clone();
+        u2.app.run("text.create", json!({"parent": chart_id, "x": 20, "y": 20, "characters": "Mon  Tue  Wed  Thu  Fri  Sat  Sun\n ●    ●    ●    ●    ●    ○    ●\n100% On-Track This Week", "props": {"fontSize": 14, "fills": ["#A5B4FC"]}})).expect("chart text");
+
+        let mark_done_button = u2
+            .app
+            .run(
+                "node.create",
+                json!({
+                    "type": "frame", "parent": detail_id, "x": 24, "y": 700, "width": 345, "height": 56, "name": "Btn·MarkDone",
+                    "props": {"fills": ["#6366F1"], "cornerRadius": 16}
+                }),
+            )
+            .expect("mark done button");
+        let return_btn_id = mark_done_button["id"].as_i64().expect("return button id");
+        u2.app.run("text.create", json!({"parent": return_btn_id, "x": 80, "y": 18, "characters": "✓ Mark Done for Today", "props": {"fontSize": 16, "fills": ["#FFFFFF"]}})).expect("ret text");
+
+        // Add flow starting point
+        let flow_res = u2.app.run("proto.flow.add", json!({"start": home_id, "name": "Habit Tracking Flow"})).expect("flow add");
+        assert_eq!(flow_res["start"], home_id);
+
+        // Connect Habit Card -> Habit Detail Screen with Push Animation
+        let proto_add_1 = u2
+            .app
+            .run(
+                "proto.interaction.add",
+                json!({
+                    "id": button_id,
+                    "trigger": {"type": "onClick"},
+                    "action": { "type": "navigate", "dest": detail_id },
+                    "transition": { "type": "push", "direction": "left" },
+                    "durationMs": 300,
+                    "easing": "easeOut"
+                }),
+            )
+            .unwrap_or_else(|| panic!("proto.interaction.add 1 failed: {:?}", u2.app.ui.last_error));
+        assert_eq!(proto_add_1["index"], 0);
+
+        // Connect Mark Done Button -> Back to Home Screen with Push Animation
+        let proto_add_2 = u2
+            .app
+            .run(
+                "proto.interaction.add",
+                json!({
+                    "id": return_btn_id,
+                    "trigger": {"type": "onClick"},
+                    "action": { "type": "navigate", "dest": home_id },
+                    "transition": { "type": "push", "direction": "right" },
+                    "durationMs": 250,
+                    "easing": "linear"
+                }),
+            )
+            .unwrap_or_else(|| panic!("proto.interaction.add 2 failed: {:?}", u2.app.ui.last_error));
+        assert_eq!(proto_add_2["index"], 0);
+
+        // Verify coordinates & behaviors are accurately bound in the document model
+        let doc = u2.app.session.doc().expect("document");
+        let node_home = doc.node(figcraft_doc::NodeId(home_id as u64)).expect("home node");
+        let node_detail = doc.node(figcraft_doc::NodeId(detail_id as u64)).expect("detail node");
+        let node_btn = doc.node(figcraft_doc::NodeId(button_id as u64)).expect("btn node");
+
+        assert_eq!(node_home.transform.translation().x, 0.0);
+        assert_eq!(node_detail.transform.translation().x, 450.0);
+        assert_eq!(node_btn.transform.translation().x, 24.0);
+        assert_eq!(node_btn.transform.translation().y, 140.0);
+        assert!(!node_btn.interactions.is_empty(), "Button has prototype interaction");
+        match &node_btn.interactions[0].actions[0] {
+            figcraft_doc::proto::Action::Navigate { dest, .. } => assert_eq!(*dest, figcraft_doc::NodeId(detail_id as u64)),
+            other => panic!("expected navigate action, got: {other:?}"),
+        }
+        match &node_btn.interactions[0].transition {
+            figcraft_doc::proto::Transition::Push { direction } => assert_eq!(*direction, figcraft_doc::proto::Direction::Left),
+            other => panic!("expected push transition, got: {other:?}"),
+        }
+
+        // =========================================================================
+        // PROMPT 3: Smart Home IoT Dashboard
+        // =========================================================================
+        let p3 = "We have a smart home system called Atmos for room climate and lighting control. Users view living room and bedroom temperatures and humidity, tap lighting scenes like Evening Relax and Focus Work with room photography, and adjust fan speed and warmth controls. Make the dashboard UI for Atmos.";
+
+        let mut u3 = chat_ui();
+        u3.app.session.execute("ai.chat.send", &json!({"text": p3})).expect("prompt 3 queued");
+        send_pending(&mut u3.app).expect("prompt 3 starts");
+
+        let msgs3 = u3.app.session.chat_messages();
+        let user_msg3 = &msgs3.last().expect("last message").content;
+
+        assert!(user_msg3.contains("design.dashboard"), "P3: Expected design.dashboard skill: {user_msg3}");
+
+        // Build Atmos Dashboard elements
+        let dash = u3
+            .app
+            .run(
+                "node.create",
+                json!({"type": "frame", "x": 0, "y": 0, "width": 1440, "height": 900, "name": "Atmos Dashboard", "props": {"fills": ["#0F1117"]}}),
+            )
+            .expect("dash");
+        let dash_id = dash["id"].clone();
+
+        // Header
+        u3.app.run("text.create", json!({"parent": dash_id, "x": 60, "y": 50, "characters": "Atmos · Climate & Lighting", "props": {"fontSize": 28, "fills": ["#FFFFFF"]}})).expect("header");
+
+        // Climate Card 1
+        let card1 = u3.app.run("node.create", json!({"type": "frame", "parent": dash_id, "x": 60, "y": 120, "width": 300, "height": 180, "name": "Card·LivingRoom", "props": {"fills": ["#1A1D26"], "cornerRadius": 16}})).expect("card1");
+        let card1_id = card1["id"].clone();
+        u3.app.run("text.create", json!({"parent": card1_id, "x": 20, "y": 20, "characters": "Living Room\n22.5°C · 45% Humidity", "props": {"fontSize": 18, "fills": ["#E2E8F0"]}})).expect("text1");
+
+        // Climate Card 2
+        let card2 = u3.app.run("node.create", json!({"type": "frame", "parent": dash_id, "x": 380, "y": 120, "width": 300, "height": 180, "name": "Card·Bedroom", "props": {"fills": ["#1A1D26"], "cornerRadius": 16}})).expect("card2");
+        let card2_id = card2["id"].clone();
+        u3.app.run("text.create", json!({"parent": card2_id, "x": 20, "y": 20, "characters": "Master Bedroom\n20.0°C · 50% Humidity", "props": {"fontSize": 18, "fills": ["#E2E8F0"]}})).expect("text2");
+
+        // Lighting Scene Card 1 with Room Photography Slot
+        let scene1 = u3.app.run("node.create", json!({"type": "frame", "parent": dash_id, "x": 60, "y": 330, "width": 420, "height": 260, "name": "Scene·EveningRelax", "props": {"fills": ["#1A1D26"], "cornerRadius": 16}})).expect("scene1");
+        let scene1_id = scene1["id"].clone();
+        u3.app.run("node.create", json!({"type": "rectangle", "parent": scene1_id, "x": 16, "y": 16, "width": 388, "height": 160, "name": "IMG·evening-relax-living-room", "props": {"fills": ["#2D3748"], "cornerRadius": 12}})).expect("img1");
+        u3.app.run("text.create", json!({"parent": scene1_id, "x": 20, "y": 190, "characters": "Evening Relax\nWarm 2700K · 40% Dimming", "props": {"fontSize": 16, "fills": ["#E2E8F0"]}})).expect("scene1 text");
+
+        // Lighting Scene Card 2 with Room Photography Slot
+        let scene2 = u3.app.run("node.create", json!({"type": "frame", "parent": dash_id, "x": 510, "y": 330, "width": 420, "height": 260, "name": "Scene·FocusWork", "props": {"fills": ["#1A1D26"], "cornerRadius": 16}})).expect("scene2");
+        let scene2_id = scene2["id"].clone();
+        u3.app.run("node.create", json!({"type": "rectangle", "parent": scene2_id, "x": 16, "y": 16, "width": 388, "height": 160, "name": "IMG·focus-work-study", "props": {"fills": ["#2D3748"], "cornerRadius": 12}})).expect("img2");
+        u3.app.run("text.create", json!({"parent": scene2_id, "x": 20, "y": 190, "characters": "Focus Work\nCrisp 4500K · 90% Brightness", "props": {"fontSize": 16, "fills": ["#E2E8F0"]}})).expect("scene2 text");
+
+        // Controls Section
+        let ctrl = u3.app.run("node.create", json!({"type": "frame", "parent": dash_id, "x": 60, "y": 620, "width": 870, "height": 140, "name": "Controls·Environmental", "props": {"fills": ["#1A1D26"], "cornerRadius": 16}})).expect("ctrl");
+        let ctrl_id = ctrl["id"].clone();
+        u3.app.run("text.create", json!({"parent": ctrl_id, "x": 24, "y": 20, "characters": "Environmental Controls · Fan Speed [Level 2 - Quiet] · Warmth [Cozy 23°C]", "props": {"fontSize": 15, "fills": ["#A0AEC0"]}})).expect("ctrl text");
+
+        // Export Renders for all 3 prompts to /tmp/sycnui-test-shots/
+        let _ = std::fs::create_dir_all("/tmp/sycnui-test-shots");
+        if let Ok(png1) = u1.app.session.chat_render_png(&[], 1.0) {
+            let _ = std::fs::write("/tmp/sycnui-test-shots/01_coffee_storefront.png", png1);
+        }
+        if let Ok(png2) = u2.app.session.chat_render_png(&[], 1.0) {
+            let _ = std::fs::write("/tmp/sycnui-test-shots/02_zenstep_mobile_proto.png", png2);
+        }
+        if let Ok(png3) = u3.app.session.chat_render_png(&[], 1.0) {
+            let _ = std::fs::write("/tmp/sycnui-test-shots/03_atmos_dashboard.png", png3);
+        }
+    }
 }
