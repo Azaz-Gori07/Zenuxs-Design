@@ -3,6 +3,7 @@ pub mod component_panel;
 pub mod dev_compare;
 pub mod dev_mode;
 pub mod export_panel;
+pub mod fa6_icons;
 pub mod frame_presets;
 pub mod icons_panel;
 pub mod layers;

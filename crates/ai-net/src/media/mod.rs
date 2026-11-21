@@ -483,6 +483,12 @@ pub fn vision_text(answer: &Value) -> Result<String, TransportError> {
     if let Some(err) = answer.pointer("/error/message").and_then(Value::as_str) {
         return Err(TransportError::BadResponse(err.to_string()));
     }
+    if let Some(err) = answer.get("error").and_then(Value::as_str) {
+        return Err(TransportError::BadResponse(err.to_string()));
+    }
+    if let Some(detail) = answer.get("detail").and_then(Value::as_str) {
+        return Err(TransportError::BadResponse(detail.to_string()));
+    }
     if let Some(s) = answer.pointer("/choices/0/message/content").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
         return Ok(s.to_string());
     }
@@ -494,6 +500,15 @@ pub fn vision_text(answer: &Value) -> Result<String, TransportError> {
     }
     if let Some(r) = answer.pointer("/choices/0/message/reasoning_content").and_then(Value::as_str).filter(|r| !r.trim().is_empty()) {
         return Ok(r.to_string());
+    }
+    if let Some(r) = answer.pointer("/choices/0/message/reasoning").and_then(Value::as_str).filter(|r| !r.trim().is_empty()) {
+        return Ok(r.to_string());
+    }
+    if let Some(r) = answer.pointer("/choices/0/message/thought").and_then(Value::as_str).filter(|r| !r.trim().is_empty()) {
+        return Ok(r.to_string());
+    }
+    if let Some(m) = answer.get("message").and_then(Value::as_str).filter(|m| !m.trim().is_empty()) {
+        return Ok(m.to_string());
     }
     if let Some(arr) = answer.get("content").and_then(Value::as_array) {
         let joined: String = arr.iter().filter_map(|c| c.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join("\n");
