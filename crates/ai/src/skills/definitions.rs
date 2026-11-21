@@ -405,6 +405,29 @@ static SKILLS: std::sync::LazyLock<Vec<Skill>> = std::sync::LazyLock::new(|| {
         validation: rules(&["The current page is visually distinct.", "A count of the shown range is present."]),
         examples: examples(&[("Add pagination under the results list.", "prev, a window of page numbers, next and a count")]),
     },
+    Skill {
+        id: "patterns.break-ui".into(),
+        name: "break-ui".into(),
+        category: SkillCategory::Patterns,
+        description: "Stress-testing layout and components against edge cases: extreme strings, empty states, missing assets.".into(),
+        version: "1.0.0".into(),
+        triggers: ["break ui", "stress test", "edge case", "overflow test", "empty state", "boundary check"].iter().map(|s| s.to_string()).collect(),
+        aliases: ["stress-test", "edge-case-audit"].iter().map(|s| s.to_string()).collect(),
+        requires: vec![],
+        defaults: defaults(&[("strings", "test German translations and multi-line titles"), ("states", "test 0 items and empty containers")]),
+        operations: ["node.set", "command.batch"].iter().map(|s| s.to_string()).collect(),
+        knowledge: [
+            "Check long copy: German translations, long names, multi-line titles — do buttons wrap or clip?",
+            "Check empty states: 0 items in list, missing avatar, network offline.",
+            "Check extreme viewports: 320px mobile up to 4K ultrawide.",
+            "Check missing media: graceful fallbacks when images fail to load.",
+        ].join("\n"),
+        validation: rules(&[
+            "Containers accommodate multi-line content without clipping.",
+            "Empty states and fallbacks are defined.",
+        ]),
+        examples: examples(&[("Stress test this card layout.", "verify long text wraps and containers do not overflow")]),
+    },
     // ---------- prototype ----------
     Skill {
         id: "prototype.navigation".into(),
@@ -554,6 +577,101 @@ static SKILLS: std::sync::LazyLock<Vec<Skill>> = std::sync::LazyLock::new(|| {
         validation: rules(&["The delays increase across the group.", "The whole sequence stays under about 600ms."]),
         examples: examples(&[("Stagger the list items in.", "per-item after-delay triggers with increasing delays")]),
     },
+    Skill {
+        id: "motion.animate".into(),
+        name: "animate".into(),
+        category: SkillCategory::Motion,
+        description: "Emil Kowalski motion system: build intentional animations that feel physical and purposeful.".into(),
+        version: "1.0.0".into(),
+        triggers: ["animate", "animation", "motion design", "spring curve", "easing", "motion transition"].iter().map(|s| s.to_string()).collect(),
+        aliases: ["motion-design", "motion-principles"].iter().map(|s| s.to_string()).collect(),
+        requires: vec![],
+        defaults: defaults(&[("easing", "ease-out"), ("duration", "200ms")]),
+        operations: ["node.set", "command.batch"].iter().map(|s| s.to_string()).collect(),
+        knowledge: [
+            "Should this animate at all? High-frequency actions (100+/day, like shortcuts or tab switches): NO animation ever.",
+            "Tens of times/day actions: fast and subtle (100–150ms) or nothing. Occasional actions (modals, drawers): standard animation (200–300ms).",
+            "Never use ease-in on entrances; entrances must use ease-out or spring physics. Never scale from 0.",
+            "Reduced motion and hover gating must always be respected.",
+            "Cheapest tool that works: simple layout/opacity transitions over complex multi-step animations.",
+        ].join("\n"),
+        validation: rules(&[
+            "Entrances use ease-out or spring, never ease-in.",
+            "High-frequency routine actions have no heavy animation.",
+        ]),
+        examples: examples(&[("Add an intentional motion transition to the dialog.", "200ms ease-out entrance with scale from 0.95")]),
+    },
+    Skill {
+        id: "motion.choreograph".into(),
+        name: "choreograph".into(),
+        category: SkillCategory::Motion,
+        description: "Coordinate multiple moving elements: order, overlap, timing, and stillness.".into(),
+        version: "1.0.0".into(),
+        triggers: ["choreograph", "choreography", "stagger sequence", "hero entrance", "coordinate motion"].iter().map(|s| s.to_string()).collect(),
+        aliases: ["motion-coordination", "choreography"].iter().map(|s| s.to_string()).collect(),
+        requires: vec!["motion.animate".into()],
+        defaults: defaults(&[("stagger-step", "30ms"), ("max-total", "400ms")]),
+        operations: ["node.set", "command.batch"].iter().map(|s| s.to_string()).collect(),
+        knowledge: [
+            "Good choreography cuts moving parts and runs the remaining ones in parallel.",
+            "Never let the user wait for a waterfall cascade: keep stagger step small (20–40ms max).",
+            "Structure elements: Lead (only one element leads), Supporting (moves with or slightly after lead), and Static (background and containers remain still).",
+        ].join("\n"),
+        validation: rules(&[
+            "Only one lead moving element.",
+            "Stagger delay between items stays under 40ms.",
+        ]),
+        examples: examples(&[("Coordinate hero entrance motion.", "single lead headline with tightly staggered cards and static shell")]),
+    },
+    Skill {
+        id: "motion.gestures".into(),
+        name: "gestures".into(),
+        category: SkillCategory::Motion,
+        description: "Direct manipulation: drag, swipe, and sheet interactions that track 1:1 and stay interruptible.".into(),
+        version: "1.0.0".into(),
+        triggers: ["gesture", "gestures", "drag", "swipe", "sheet", "bottom sheet", "pull to refresh", "rubber band", "fling"].iter().map(|s| s.to_string()).collect(),
+        aliases: ["gesture-interaction", "direct-manipulation"].iter().map(|s| s.to_string()).collect(),
+        requires: vec![],
+        defaults: defaults(&[("track-phase", "1:1 direct pointer tracking"), ("release-phase", "velocity-seeded spring")]),
+        operations: ["node.set", "command.batch"].iter().map(|s| s.to_string()).collect(),
+        knowledge: [
+            "Two phases of every gesture:",
+            "1. TRACK phase: pointer down maps 1:1 to position. No easing, no spring lag. The element tracks the finger directly.",
+            "2. RELEASE phase: physics finishes motion (spring seeded with release velocity).",
+            "Interruptibility is non-negotiable: users can catch an animating sheet or card mid-flight.",
+            "Rubber-band at edges: resistance communicates physical boundaries instead of an abrupt hard stop.",
+            "Bounce belongs ONLY at the end of a physical fling or drag, never on a button click.",
+        ].join("\n"),
+        validation: rules(&[
+            "Track phase is 1:1 direct manipulation without lag.",
+            "Release phase finishes with velocity physics.",
+            "Sheet interactions remain interruptible.",
+        ]),
+        examples: examples(&[("Build an interactive bottom sheet.", "1:1 finger tracking with rubber-band edge resistance and velocity dismiss")]),
+    },
+    Skill {
+        id: "motion.apple-design".into(),
+        name: "apple-design".into(),
+        category: SkillCategory::Motion,
+        description: "Apple's approach to interface design and fluid physical motion: springs, depth, spatial consistency.".into(),
+        version: "1.0.0".into(),
+        triggers: ["apple design", "fluid interface", "fluid motion", "spatial consistency", "tactile"].iter().map(|s| s.to_string()).collect(),
+        aliases: ["fluid-design", "apple-motion"].iter().map(|s| s.to_string()).collect(),
+        requires: vec![],
+        defaults: defaults(&[("physics", "spring"), ("spatial", "origin-consistent")]),
+        operations: ["node.create", "node.set", "command.batch"].iter().map(|s| s.to_string()).collect(),
+        knowledge: [
+            "Fluid, continuous motion: direct manipulation, momentum, spring physics, and interruptible transitions.",
+            "Spatial consistency: elements originate from and return to where they live in the visual hierarchy.",
+            "Optical sizing, typographic tracking, and leading that adapt naturally to hierarchy.",
+            "Restraint: motion serves orientation, state clarity, and physical continuity — never gratuitous decoration.",
+        ].join("\n"),
+        validation: rules(&[
+            "Motion maintains spatial consistency with element origins.",
+            "Spring physics used for interactive transitions.",
+        ]),
+        examples: examples(&[("Design fluid Apple-style card expansion.", "spring physics with spatial consistency from card origin")]),
+    },
     // ---------- state ----------
     Skill {
         id: "state.loading".into(),
@@ -674,5 +792,26 @@ mod tests {
             }
             assert!(!router.skills_in_category(*category).is_empty(), "{} has no skills", category.id());
         }
+    }
+
+    #[test]
+    fn emil_kowalski_motion_skills_are_routed() {
+        let router = SkillRouter::new(builtin_skills());
+
+        let route = router.route("/animate", None);
+        assert!(route.ordered.contains(&"motion.animate".to_string()));
+
+        let route = router.route("/choreograph", None);
+        assert!(route.ordered.contains(&"motion.choreograph".to_string()));
+        assert!(route.ordered.contains(&"motion.animate".to_string()));
+
+        let route = router.route("/gestures", None);
+        assert!(route.ordered.contains(&"motion.gestures".to_string()));
+
+        let route = router.route("/apple-design", None);
+        assert!(route.ordered.contains(&"motion.apple-design".to_string()));
+
+        let route = router.route("/break-ui", None);
+        assert!(route.ordered.contains(&"patterns.break-ui".to_string()));
     }
 }

@@ -127,6 +127,97 @@ static PROMPT_SKILLS: std::sync::LazyLock<Vec<PromptSkill>> = std::sync::LazyLoc
 - Check the arithmetic before building, not after: the vertical budget of the sections against the page height."
             .into(),
     },
+    PromptSkill {
+        id: "default.emil-animate".into(),
+        name: "emil-animate".into(),
+        display_name: "Emil Kowalski — Animate".into(),
+        description: "Motion decisions: purpose, duration, curves, interruptibility, and exits.".into(),
+        version: "1.0.0".into(),
+        author: "Emil Kowalski".into(),
+        source_url: "https://github.com/emilkowalski/skills".into(),
+        tags: ["animation".into(), "motion".into(), "emil".into()].to_vec(),
+        is_default: true,
+        enabled: false,
+        prompt_content: "\
+# Building Animations (Emil Kowalski)
+
+- Should this animate at all?
+  - 100+ times/day (keyboard shortcuts, tab switches): No animation ever.
+  - Tens of times/day: Fast and subtle (100–150ms) or nothing.
+  - Occasional (modals, drawers, dialogs): Standard animation (200–300ms).
+- Never animate something that shouldn't animate.
+- Never use ease-in on entrances. Entrances must use ease-out or spring physics.
+- Never use scale(0) on entrances: scale from ~0.95 or 0.9.
+- Reduced motion and hover gating must always be respected.
+- Cheapest tool that works: simple CSS/layout transitions over complex keyframes."
+            .into(),
+    },
+    PromptSkill {
+        id: "default.emil-choreograph".into(),
+        name: "emil-choreograph".into(),
+        display_name: "Emil Kowalski — Choreography".into(),
+        description: "Coordinate multiple moving elements: order, overlap, timing, and stillness.".into(),
+        version: "1.0.0".into(),
+        author: "Emil Kowalski".into(),
+        source_url: "https://github.com/emilkowalski/skills".into(),
+        tags: ["choreograph".into(), "stagger".into(), "emil".into()].to_vec(),
+        is_default: true,
+        enabled: false,
+        prompt_content: "\
+# Motion Choreography (Emil Kowalski)
+
+- Coordinate elements that move together: order, overlap, timing, and stillness.
+- Good choreography is about cutting moving parts and running the remaining ones in parallel.
+- Avoid waterfall cascades where the user waits for items one by one.
+- Keep stagger steps tight: 20–40ms max between sibling items.
+- Structure elements into:
+  - Lead: Exactly one element leads the animation.
+  - Supporting: Moves with or immediately after the lead.
+  - Static: Containers and backgrounds stay still while content enters."
+            .into(),
+    },
+    PromptSkill {
+        id: "default.emil-gestures".into(),
+        name: "emil-gestures".into(),
+        display_name: "Emil Kowalski — Gestures".into(),
+        description: "Direct manipulation: drag, swipe, sheets that track 1:1 and stay interruptible.".into(),
+        version: "1.0.0".into(),
+        author: "Emil Kowalski".into(),
+        source_url: "https://github.com/emilkowalski/skills".into(),
+        tags: ["gestures".into(), "swipe".into(), "touch".into(), "emil".into()].to_vec(),
+        is_default: true,
+        enabled: false,
+        prompt_content: "\
+# Gesture-Driven UI (Emil Kowalski)
+
+- Two phases of every gesture:
+  - TRACK phase (pointer down): 1:1 position mapping to the finger. No easing, no spring lag.
+  - RELEASE phase (pointer lifted): Physics finishes motion (spring seeded with release velocity).
+- Interruptibility is non-negotiable: users can catch an animating sheet or card mid-flight.
+- Rubber-band at edges: resistance communicates physical boundaries instead of an abrupt hard stop.
+- Bounce belongs ONLY at the end of a physical fling or drag, never on a button press."
+            .into(),
+    },
+    PromptSkill {
+        id: "default.emil-apple-design".into(),
+        name: "emil-apple-design".into(),
+        display_name: "Emil Kowalski — Apple Design".into(),
+        description: "Fluid interfaces and physical motion: springs, materials, depth, spatial consistency.".into(),
+        version: "1.0.0".into(),
+        author: "Emil Kowalski".into(),
+        source_url: "https://github.com/emilkowalski/skills".into(),
+        tags: ["apple".into(), "fluid".into(), "motion".into(), "emil".into()].to_vec(),
+        is_default: true,
+        enabled: false,
+        prompt_content: "\
+# Apple Design Foundations (Emil Kowalski)
+
+- Fluid, continuous motion: direct manipulation, momentum, spring physics, and interruptible transitions.
+- Spatial consistency: elements originate from and return to where they live in the visual hierarchy.
+- Optical sizing, typographic tracking, and leading that adapt naturally to hierarchy.
+- Restraint: motion serves orientation, state clarity, and physical continuity — never gratuitous decoration."
+            .into(),
+    },
     ]
 });
 
