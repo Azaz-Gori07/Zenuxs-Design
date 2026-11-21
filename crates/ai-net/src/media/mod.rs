@@ -480,17 +480,40 @@ pub fn decode_image(answer: &Value) -> Result<Vec<u8>, TransportError> {
 
 /// The Vision model's plain text, whichever protocol answered.
 pub fn vision_text(answer: &Value) -> Result<String, TransportError> {
-    let text = answer
-        .pointer("/choices/0/message/content")
-        .or_else(|| answer.pointer("/content/0/text"))
-        .or_else(|| answer.pointer("/candidates/0/content/parts/0/text"))
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    if text.is_empty() {
-        return Err(TransportError::BadResponse("the Vision model returned no text".into()));
+    if let Some(err) = answer.pointer("/error/message").and_then(Value::as_str) {
+        return Err(TransportError::BadResponse(err.to_string()));
     }
-    Ok(text)
+    if let Some(s) = answer.pointer("/choices/0/message/content").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
+        return Ok(s.to_string());
+    }
+    if let Some(arr) = answer.pointer("/choices/0/message/content").and_then(Value::as_array) {
+        let joined: String = arr.iter().filter_map(|c| c.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join("\n");
+        if !joined.trim().is_empty() {
+            return Ok(joined);
+        }
+    }
+    if let Some(r) = answer.pointer("/choices/0/message/reasoning_content").and_then(Value::as_str).filter(|r| !r.trim().is_empty()) {
+        return Ok(r.to_string());
+    }
+    if let Some(arr) = answer.get("content").and_then(Value::as_array) {
+        let joined: String = arr.iter().filter_map(|c| c.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join("\n");
+        if !joined.trim().is_empty() {
+            return Ok(joined);
+        }
+    }
+    if let Some(s) = answer.pointer("/content/0/text").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
+        return Ok(s.to_string());
+    }
+    if let Some(arr) = answer.pointer("/candidates/0/content/parts").and_then(Value::as_array) {
+        let joined: String = arr.iter().filter_map(|p| p.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join("\n");
+        if !joined.trim().is_empty() {
+            return Ok(joined);
+        }
+    }
+    if let Some(s) = answer.pointer("/choices/0/text").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
+        return Ok(s.to_string());
+    }
+    Err(TransportError::BadResponse("the Vision model returned no text".into()))
 }
 
 /// The SVG a vectorizer answered with. Recraft returns `{svg: "..."}`; fal returns
@@ -936,8 +959,12 @@ mod tests {
     #[test]
     fn a_vision_answer_is_read_from_whichever_protocol_answered() {
         assert_eq!(vision_text(&json!({"choices": [{"message": {"content": "a lamp"}}]})).unwrap_or_default(), "a lamp");
+        assert_eq!(vision_text(&json!({"choices": [{"message": {"content": [{"text": "a lamp"}]}}]})).unwrap_or_default(), "a lamp");
+        assert_eq!(vision_text(&json!({"choices": [{"message": {"content": "", "reasoning_content": "a lamp"}}]})).unwrap_or_default(), "a lamp");
         assert_eq!(vision_text(&json!({"content": [{"text": "a lamp"}]})).unwrap_or_default(), "a lamp");
         assert_eq!(vision_text(&json!({"candidates": [{"content": {"parts": [{"text": "a lamp"}]}}]})).unwrap_or_default(), "a lamp");
+        assert_eq!(vision_text(&json!({"choices": [{"text": "a lamp"}]})).unwrap_or_default(), "a lamp");
+        assert!(vision_text(&json!({"error": {"message": "rate limited"}})).is_err());
         assert!(vision_text(&json!({})).is_err());
     }
 

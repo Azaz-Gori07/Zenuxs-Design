@@ -966,7 +966,15 @@ async fn look_at_design(factory: &dyn figcraft_ai::MediaFactory, keys: &MediaKey
     let mut session = factory.make(keys.0.clone(), None, keys.2.clone(), keys.3.clone());
     match session.inspect_image(&bytes, "image/png", &prompt).await {
         Ok(text) => json!({"looked_at": name, "answer": text.trim()}).to_string(),
-        Err(e) => json!({"error": e.message()}).to_string(),
+        Err(e) => {
+            if keys.0.is_none() {
+                return json!({"error": e.message()}).to_string();
+            }
+            json!({
+                "looked_at": name,
+                "answer": format!("Render captured. Visual review unavailable ({}). Tip: Use `audit_layout` to verify layer bounds, alignment and clipping.", e.message())
+            }).to_string()
+        }
     }
 }
 
