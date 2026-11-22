@@ -273,7 +273,7 @@ fn capsule(a: (f32, f32), b: (f32, f32), r: f32) -> Vec<(f32, f32)> {
 }
 
 /// Triangles of a simple polygon (ear clipping); empty when it can't be split.
-fn triangulate(v: &[Pos2]) -> Vec<u32> {
+pub(crate) fn triangulate(v: &[Pos2]) -> Vec<u32> {
     let n = v.len();
     if n < 3 {
         return Vec::new();
@@ -292,7 +292,13 @@ fn triangulate(v: &[Pos2]) -> Vec<u32> {
                     .iter()
                     .any(|&k| k != ia && k != ib && k != ic && cross(a, b, v[k]) >= 0.0 && cross(b, c, v[k]) >= 0.0 && cross(c, a, v[k]) >= 0.0)
         });
-        let Some(i) = ear else { return Vec::new() };
+        let i = match ear {
+            Some(i) => i,
+            None => (0..m).find(|&k| {
+                let (ia, ib, ic) = (idx[(k + m - 1) % m], idx[k], idx[(k + 1) % m]);
+                cross(v[ia], v[ib], v[ic]) >= 0.0
+            }).unwrap_or(0),
+        };
         out.extend([idx[(i + m - 1) % m] as u32, idx[i] as u32, idx[(i + 1) % m] as u32]);
         idx.remove(i);
     }
