@@ -28,6 +28,7 @@ egui = { workspace = true }
 # `links`: without it eframe drops every `ctx.open_url` and hyperlink click (the update prompt's
 # What's new and Download, About, Credits) with only a log warning.
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "clipboard", "links", "wayland", "x11"] }
+serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 rfd = { workspace = true }

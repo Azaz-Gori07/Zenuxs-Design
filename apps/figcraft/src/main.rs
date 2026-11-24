@@ -236,6 +236,11 @@ fn main() -> eframe::Result {
     session.live.links = figcraft_collab_net::links::system();
     session.invite_links_startup();
     let first_run = svc.prefs.is_none() && args.join.is_none();
+    if args.files.is_empty() && args.join.is_none() && session.docs.is_empty()
+        && let Some(d) = services::config_dir()
+    {
+        services::restore_session_state(&d, &mut session);
+    }
     if session.docs.is_empty() && opens_new_file(first_run, session.prefs.start_on_home, port.is_some()) {
         let _ = session.execute("file.new", &json!({}));
     }

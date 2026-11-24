@@ -85,6 +85,8 @@ pub struct Panel {
     /// on the document when the model completes its pass, checking for broken elements,
     /// overflowing buttons, missing photography, and alignment faults.
     pub review_rounds: usize,
+    /// How many tools have run during this turn. Only a send that ran tools could have changed the document.
+    pub tools_run_count: usize,
     /// The title being typed for a rename, when one is open.
     pub rename: Option<String>,
     /// Image currently attached to the composer draft (pasted from clipboard or selected).
@@ -122,6 +124,7 @@ impl Default for Panel {
             rename: None,
             empty_answers: 0,
             review_rounds: 0,
+            tools_run_count: 0,
             attached_image: None,
             focus_draft: false,
             last_selected_id: None,
@@ -347,6 +350,7 @@ pub fn send(app: &mut FigApp, text: &str) -> Result<(), String> {
     // send, not to the conversation.
     app.ui.chat.empty_answers = 0;
     app.ui.chat.review_rounds = 0;
+    app.ui.chat.tools_run_count = 0;
 
     // The selection and the page, as the model reads them.
     let selection = selection_context(app);
@@ -803,7 +807,7 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
             // Only a send that ran at least one tool can have changed the document; a question
             // answered in prose is not audited, and must not be turned into one.
             const MAX_REVIEW_ROUNDS: usize = 3;
-            if streaming.step > 0
+            if app.ui.chat.tools_run_count > 0
                 && app.ui.chat.review_rounds < MAX_REVIEW_ROUNDS
                 && !streaming.text.trim().is_empty()
                 && let Some(blockers) = audit_blockers(app)
@@ -848,21 +852,18 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
                 }
             }
             app.session.chat.busy = false;
-            let _ = app.session.chat_append(ChatMessage::assistant(streaming.text.clone()));
-            // A model that answers with nothing is a failure the person must see: silently
-            // returning to an unchanged canvas reads as "the AI did nothing".
-            if streaming.text.trim().is_empty() {
-                if app.ui.chat.failure.is_none() {
-                    let err = tr("The model answered with nothing. Try again, or pick another model in AI & Agents.").to_string();
-                    app.ui.chat.failure = Some(err.clone());
-                    let _ = app.session.chat_append(ChatMessage::assistant(format!("❌ {err}")));
-                }
-            } else {
+            if !streaming.text.trim().is_empty() {
+                let _ = app.session.chat_append(ChatMessage::assistant(streaming.text.clone()));
                 app.ui.chat.empty_answers = 0;
+            } else if app.ui.chat.failure.is_none() {
+                let err = tr("The model answered with nothing. Try again, or pick another model in AI & Agents.").to_string();
+                app.ui.chat.failure = Some(err.clone());
+                let _ = app.session.chat_append(ChatMessage::assistant(format!("❌ {err}")));
             }
             ctx.request_repaint();
             return true;
         }
+        app.ui.chat.tools_run_count += calls.len();
         app.session.chat_append(ChatMessage::assistant_calls(streaming.text.clone(), calls.clone())).ok();
         app.session.chat.pending_tool_calls = calls.clone();
         if streaming.step + 1 >= MAX_STEPS {

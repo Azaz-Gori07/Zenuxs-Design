@@ -16,9 +16,14 @@ pub type ParseError = String;
 
 /// Build the request body.
 pub fn request_body(request: &ChatRequest) -> Value {
+    let mut msgs = Vec::new();
+    if !request.system.trim().is_empty() {
+        msgs.push(json!({"role": "system", "content": request.system.trim()}));
+    }
+    msgs.extend(messages(&request.messages));
     let mut body = json!({
         "model": request.model,
-        "messages": messages(&request.messages),
+        "messages": msgs,
         "stream": true,
         "stream_options": {"include_usage": true},
     });
@@ -197,7 +202,9 @@ mod tests {
         assert_eq!(body["stream"], true);
         assert_eq!(body["max_tokens"], 512);
         assert_eq!(body["reasoning_effort"], "low");
-        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert_eq!(body["messages"][0]["content"], "be brief");
+        assert_eq!(body["messages"][1]["role"], "user");
         assert_eq!(body["tools"][0]["function"]["name"], "run_command");
     }
 
@@ -210,9 +217,9 @@ mod tests {
         ));
         r.messages.push(ChatMessage::tool_result("c1", "{\"ok\":true}"));
         let body = request_body(&r);
-        assert_eq!(body["messages"][1]["tool_calls"][0]["id"], "c1");
-        assert_eq!(body["messages"][2]["tool_call_id"], "c1");
-        assert_eq!(body["messages"][2]["role"], "tool");
+        assert_eq!(body["messages"][2]["tool_calls"][0]["id"], "c1");
+        assert_eq!(body["messages"][3]["tool_call_id"], "c1");
+        assert_eq!(body["messages"][3]["role"], "tool");
     }
 
     #[test]
@@ -288,7 +295,8 @@ mod tests {
             vec!["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==".into()],
         )];
         let body = request_body(&r);
-        let content = &body["messages"][0]["content"];
+        assert_eq!(body["messages"][0]["role"], "system");
+        let content = &body["messages"][1]["content"];
         assert_eq!(content[0]["type"], "text");
         assert_eq!(content[0]["text"], "Check this design");
         assert_eq!(content[1]["type"], "image_url");

@@ -1,12 +1,14 @@
 //! Desktop services: native file dialogs, clipboard, URLs, persisted preferences.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use figcraft_engine::{Prefs, Session};
 use figcraft_ui_egui::{DialogFuture, FigApp, Services};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub struct Desktop {
@@ -421,18 +423,164 @@ impl figcraft_ai::credentials::CredentialStore for DesktopCredentials {
     }
 }
 
+const SAVED_SESSIONS_DIR: &str = "SavedSessions";
+const SESSION_STATE_FILE: &str = "session.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedTab {
+    pub title: String,
+    pub path: Option<String>,
+    pub draft_file: Option<String>,
+    pub is_dirty: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedSession {
+    pub active_tab: usize,
+    pub tabs: Vec<SavedTab>,
+}
+
 /// Everything quitting keeps, all done when it returns (macOS then ends the process): the
 /// preferences in `dir`, this run's recovery copies ([`Recovery::quit`](crate::recovery::Recovery::quit))
 /// and the live sessions' ends (one this app hosts tells everyone and stops; a joined one leaves).
 pub fn shutdown(app: &mut FigApp, dir: Option<&Path>, recovery: Option<crate::recovery::Recovery>) {
     if let Some(dir) = dir {
         write_prefs(dir, &app.session.prefs);
+        save_session_state(dir, &app.session);
     }
     // Before the sessions end: a recovered online file's copy waits for its session's outcome.
     if let Some(r) = recovery {
         r.quit(&app.session, app.ui.quit);
     }
     drop(std::mem::take(&mut app.session.live));
+}
+
+/// Persist the open documents and their draft snapshots to `config_dir/SavedSessions/`.
+pub fn save_session_state(config_dir: &Path, session: &Session) {
+    let session_dir = config_dir.join(SAVED_SESSIONS_DIR);
+    if std::fs::create_dir_all(&session_dir).is_err() {
+        return;
+    }
+
+    let mut tabs = Vec::new();
+    let mut active_draft_files = HashSet::new();
+
+    for ds in &session.docs {
+        let is_dirty = ds.is_dirty();
+        let has_disk_file = ds.path.as_ref().is_some_and(|p| !is_dirty && Path::new(p).exists());
+
+        if has_disk_file {
+            tabs.push(SavedTab {
+                title: ds.doc.name.clone(),
+                path: ds.path.clone(),
+                draft_file: None,
+                is_dirty: false,
+            });
+        } else {
+            // Untitled canvas or modified file: persist full document draft with versions and branches.
+            let draft_name = format!("draft_{}.figcraft", ds.uid);
+            let draft_path = session_dir.join(&draft_name);
+            let (doc, versions, branches) = figcraft_engine::branches::recovery_copy(session, ds);
+            if let Ok(bytes) = figcraft_format::save_bytes_with_history(&doc, None, &versions, &branches)
+                && write_private_atomic(&draft_path, &bytes).is_ok()
+            {
+                active_draft_files.insert(draft_name.clone());
+                tabs.push(SavedTab {
+                    title: ds.doc.name.clone(),
+                    path: ds.path.clone(),
+                    draft_file: Some(draft_name),
+                    is_dirty,
+                });
+                continue;
+            }
+            if let Some(ref p) = ds.path {
+                tabs.push(SavedTab {
+                    title: ds.doc.name.clone(),
+                    path: Some(p.clone()),
+                    draft_file: None,
+                    is_dirty,
+                });
+            }
+        }
+    }
+
+    // Clean up old draft files that are no longer part of active tabs
+    if let Ok(entries) = std::fs::read_dir(&session_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.extension().is_some_and(|e| e == "figcraft")
+                && let Some(file_name) = p.file_name().and_then(|f| f.to_str())
+                && !active_draft_files.contains(file_name)
+            {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
+
+    let saved = SavedSession {
+        active_tab: session.active,
+        tabs,
+    };
+
+    if let Ok(json_bytes) = serde_json::to_vec_pretty(&saved) {
+        let _ = write_private_atomic(&session_dir.join(SESSION_STATE_FILE), &json_bytes);
+    }
+}
+
+/// Restore tabs that were open during the last session. Returns true if at least one tab was reopened.
+pub fn restore_session_state(config_dir: &Path, session: &mut Session) -> bool {
+    let session_dir = config_dir.join(SAVED_SESSIONS_DIR);
+    let session_file = session_dir.join(SESSION_STATE_FILE);
+    let Ok(data) = std::fs::read(&session_file) else {
+        return false;
+    };
+    let Ok(saved) = serde_json::from_slice::<SavedSession>(&data) else {
+        return false;
+    };
+    if saved.tabs.is_empty() {
+        return false;
+    }
+
+    let mut restored = 0;
+    for tab in saved.tabs {
+        if let Some(draft_name) = &tab.draft_file {
+            let draft_path = session_dir.join(draft_name);
+            if draft_path.exists() {
+                let count_before = session.docs.len();
+                if session.execute("file.recover", &json!({"path": draft_path.to_string_lossy()})).is_ok()
+                    && session.docs.len() > count_before
+                {
+                    if let Some(ds) = session.docs.last_mut() {
+                        ds.path = tab.path.clone();
+                        Arc::make_mut(&mut ds.doc).name = tab.title.clone();
+                        if !tab.is_dirty {
+                            ds.mark_saved();
+                        }
+                    }
+                    restored += 1;
+                    continue;
+                }
+            }
+        }
+
+        if let Some(path) = &tab.path
+            && Path::new(path).exists()
+        {
+            let count_before = session.docs.len();
+            if session.execute("file.open", &json!({"path": path})).is_ok()
+                && session.docs.len() > count_before
+            {
+                restored += 1;
+            }
+        }
+    }
+
+    if restored > 0 {
+        session.active = saved.active_tab.min(session.docs.len().saturating_sub(1));
+        true
+    } else {
+        false
+    }
 }
 
 /// Write `prefs` to `dir` atomically (a temporary file renamed over the old one: a crash leaves
@@ -459,6 +607,12 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     #[cfg(unix)]
     f.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
     f.write_all(bytes)
+}
+
+fn write_private_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    write_private(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)
 }
 
 thread_local! {

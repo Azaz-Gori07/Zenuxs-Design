@@ -419,7 +419,8 @@ mod tests {
         // Both builds share this, so the page sends what the app sends.
         let body = protocol_body(&endpoint(Protocol::Openai), &request(Protocol::Openai)).expect("a body");
         assert_eq!(body["model"], "gpt-5.6");
-        assert_eq!(body["messages"][0]["content"], "hello");
+        assert_eq!(body["messages"][0]["content"], "be brief");
+        assert_eq!(body["messages"][1]["content"], "hello");
     }
 
     #[test]

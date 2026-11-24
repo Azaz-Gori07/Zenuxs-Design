@@ -152,3 +152,35 @@ fn links_in_the_interface_open_in_the_browser() {
     assert!(!eframe.is_empty(), "the app depends on eframe");
     assert!(eframe.iter().any(|l| l.contains("\"links\"")), "eframe is built with `links`: {eframe:?}");
 }
+
+#[test]
+fn session_tabs_and_drafts_persist_and_restore_on_restart() {
+    let dir = root("session-persist");
+    let mut fig = start(&dir);
+    // Initial document: add a shape
+    let _ = fig.session.execute("shape.rectangle", &json!({"x": 10, "y": 20, "width": 100, "height": 50}));
+    // Open a second document and add another shape
+    let _ = fig.session.execute("file.new", &json!({}));
+    let _ = fig.session.execute("shape.ellipse", &json!({"x": 50, "y": 60, "width": 80, "height": 80}));
+    assert_eq!(fig.session.docs.len(), 2);
+    assert_eq!(fig.session.active, 1);
+
+    // Save session state
+    crate::services::save_session_state(&dir, &fig.session);
+
+    let session_file = dir.join("SavedSessions").join("session.json");
+    assert!(session_file.exists(), "session.json must be written");
+
+    // Start a fresh session with no open documents
+    let mut fresh = figcraft_engine::Session::empty();
+    assert_eq!(fresh.docs.len(), 0);
+
+    // Restore session state
+    let restored = crate::services::restore_session_state(&dir, &mut fresh);
+    assert!(restored, "restore_session_state must succeed");
+    assert_eq!(fresh.docs.len(), 2, "both tabs must be restored");
+    assert_eq!(fresh.active, 1, "active tab must be preserved");
+
+    // Clean up
+    let _ = std::fs::remove_dir_all(&dir);
+}
