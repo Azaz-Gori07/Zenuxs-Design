@@ -46,6 +46,21 @@ fn messages(messages: &[ChatMessage]) -> Vec<Value> {
     let mut out = Vec::new();
     for message in messages {
         match message.role {
+            Role::User if !message.images.is_empty() => {
+                let mut parts = Vec::new();
+                if !message.content.is_empty() {
+                    parts.push(json!({"type": "text", "text": message.content}));
+                }
+                for img in &message.images {
+                    let url = if img.starts_with("data:") || img.starts_with("http:") || img.starts_with("https:") {
+                        img.clone()
+                    } else {
+                        format!("data:image/png;base64,{img}")
+                    };
+                    parts.push(json!({"type": "image_url", "image_url": {"url": url}}));
+                }
+                out.push(json!({"role": "user", "content": parts}));
+            }
             Role::User => out.push(json!({"role": "user", "content": message.content})),
             Role::Assistant if message.tool_calls.is_empty() => out.push(json!({"role": "assistant", "content": message.content})),
             Role::Assistant => {
@@ -87,6 +102,10 @@ pub fn parse_stream(data: &[String]) -> Result<(Vec<Chunk>, ChatResponse), Parse
 
     for payload in data {
         let chunk: Value = serde_json::from_str(payload).map_err(|e| format!("a stream chunk was not JSON: {e}"))?;
+        if let Some(err) = chunk.get("error") {
+            let msg = err.get("message").and_then(Value::as_str).unwrap_or("unknown provider error");
+            return Err(format!("provider error: {msg}"));
+        }
         if let Some(usage) = chunk.get("usage").filter(|u| !u.is_null()) {
             response.input_tokens = usage.get("prompt_tokens").and_then(Value::as_u64).or(response.input_tokens);
             response.output_tokens = usage.get("completion_tokens").and_then(Value::as_u64).or(response.output_tokens);
@@ -259,5 +278,20 @@ mod tests {
         ];
         let (_, response) = parse_stream(&data).expect("the stream parses");
         assert_eq!(response.cache_read_tokens, Some(80));
+    }
+
+    #[test]
+    fn a_user_message_with_images_formats_as_multimodal() {
+        let mut r = request();
+        r.messages = vec![ChatMessage::user_with_images(
+            "Check this design",
+            vec!["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==".into()],
+        )];
+        let body = request_body(&r);
+        let content = &body["messages"][0]["content"];
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "Check this design");
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
     }
 }

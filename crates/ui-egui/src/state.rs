@@ -12,6 +12,7 @@ pub enum LeftTab {
     File,
     Assets,
     Icons,
+    Market,
 }
 
 /// The window's title bar.

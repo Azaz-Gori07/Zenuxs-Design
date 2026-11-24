@@ -6,6 +6,7 @@ pub mod export_panel;
 pub mod fa6_icons;
 pub mod frame_presets;
 pub mod icons_panel;
+pub mod market_panel;
 pub mod layers;
 pub mod layout_panel;
 pub mod list_drag;

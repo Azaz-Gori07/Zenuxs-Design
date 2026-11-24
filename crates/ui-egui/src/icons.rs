@@ -294,10 +294,12 @@ pub(crate) fn triangulate(v: &[Pos2]) -> Vec<u32> {
         });
         let i = match ear {
             Some(i) => i,
-            None => (0..m).find(|&k| {
-                let (ia, ib, ic) = (idx[(k + m - 1) % m], idx[k], idx[(k + 1) % m]);
-                cross(v[ia], v[ib], v[ic]) >= 0.0
-            }).unwrap_or(0),
+            None => (0..m)
+                .find(|&k| {
+                    let (ia, ib, ic) = (idx[(k + m - 1) % m], idx[k], idx[(k + 1) % m]);
+                    cross(v[ia], v[ib], v[ic]) >= 0.0
+                })
+                .unwrap_or(0),
         };
         out.extend([idx[(i + m - 1) % m] as u32, idx[i] as u32, idx[(i + 1) % m] as u32]);
         idx.remove(i);

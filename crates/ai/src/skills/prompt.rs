@@ -218,6 +218,113 @@ static PROMPT_SKILLS: std::sync::LazyLock<Vec<PromptSkill>> = std::sync::LazyLoc
 - Restraint: motion serves orientation, state clarity, and physical continuity — never gratuitous decoration."
             .into(),
     },
+    PromptSkill {
+        id: "default.emil-design-eng".into(),
+        name: "emil-design-eng".into(),
+        display_name: "Emil Kowalski — Design Engineering".into(),
+        description: "UI polish, component design, interaction nuances, and invisible craft details.".into(),
+        version: "1.0.0".into(),
+        author: "Emil Kowalski".into(),
+        source_url: "https://github.com/emilkowalski/skills".into(),
+        tags: ["design-engineering".into(), "polish".into(), "emil".into()].to_vec(),
+        is_default: true,
+        enabled: false,
+        prompt_content: "\
+# Design Engineering (Emil Kowalski)
+
+- Taste is trained, not innate: study and reverse-engineer why exceptional interfaces feel right.
+- Unseen details compound: press and hover states, popover origin, tooltip timing, transitions vs keyframes.
+- Never let an interaction feel disconnected: feedback is immediate (<100ms) and transitions are purposeful.
+- Color and contrast: use subtle borders and elevation instead of heavy shadows; preserve visual hierarchy.
+- Layout polish: optical alignment over mechanical centering where typography or asymmetric shapes demand it."
+            .into(),
+    },
+    PromptSkill {
+        id: "default.impeccable".into(),
+        name: "impeccable".into(),
+        display_name: "Impeccable Design Craft & Polish".into(),
+        description: "Production-grade UI craft: typography, layout, color hierarchy, and edge cases.".into(),
+        version: "1.0.0".into(),
+        author: "Impeccable".into(),
+        source_url: "https://github.com/pbakaus/impeccable".into(),
+        tags: ["craft".into(), "quality".into(), "polish".into(), "ui".into()].to_vec(),
+        is_default: true,
+        enabled: false,
+        prompt_content: "\
+# Impeccable Design Craft
+
+- Production-grade UI craft: no hedging, no filler, clear point of view.
+- Visual hierarchy: scale ambition to surface mode; clear primary focal point, restrained accents.
+- Spacing & Rhythm: strict 4px/8px grid alignment across all components and frames.
+- Real content: always use real, contextual product copy; never lorem ipsum or generic filler.
+- Edge cases: test and design for long names, narrow widths, empty states, and contrast accessibility."
+            .into(),
+    },
+    PromptSkill {
+        id: "default.mobile-native".into(),
+        name: "mobile-native".into(),
+        display_name: "Mobile Native Polish".into(),
+        description: "Mobile web & app feel: touch targets, swipe interactions, viewport resilience.".into(),
+        version: "1.0.0".into(),
+        author: "Mobile Craft".into(),
+        source_url: String::new(),
+        tags: ["mobile".into(), "touch".into(), "native".into(), "responsive".into()].to_vec(),
+        is_default: true,
+        enabled: false,
+        prompt_content: "\
+# Mobile Native Polish
+
+- Touch targets: minimum 44px on their short side, with ample padding.
+- Viewport resilience: design with dynamic status bars, home indicators, and bottom sheets in mind.
+- Gestures: swipe-to-dismiss and pull-down sheets follow 1:1 finger tracking with momentum release.
+- Tap highlight & hover: eliminate sticky hover states on mobile touch targets.
+- Content density: mobile navigation stacks cleanly without truncating vital headlines or CTAs."
+            .into(),
+    },
+    PromptSkill {
+        id: "default.apple-design".into(),
+        name: "apple-design".into(),
+        display_name: "Apple Design (HIG)".into(),
+        description: "Review and audit UI against Apple Human Interface Guidelines & Liquid Glass craft.".into(),
+        version: "1.0.0".into(),
+        author: "dickwu".into(),
+        source_url: "https://github.com/dickwu/apple-design-skill".into(),
+        tags: ["apple".into(), "hig".into(), "design".into(), "review".into()].to_vec(),
+        is_default: true,
+        enabled: false,
+        prompt_content: "\
+# Apple Design (Human Interface Guidelines)
+
+- Ground UI/UX decisions in Apple's Human Interface Guidelines with a distinctive design-craft lens.
+- Liquid Glass material: subtle translucent borders, optical contrast, blur layers, and background adaptation.
+- Component rigor: conform to platform conventions for toolbars, sheets, sidebars, navigation bars, and tab bars.
+- Typography: San Francisco optical sizing, tracking, leading, and deliberate visual hierarchy.
+- Spatial consistency: fluid springs, physical continuity, interruptible transitions, and momentum gestures.
+- Accessibility & Contrast: text and key icons must meet AA contrast ratios (4.5:1 body, 3:1 large); dark mode must preserve hierarchy without blown-out whites.
+- Restraint: eliminate templated filler, maintain clear focal points, and design with deliberate purpose."
+            .into(),
+    },
+    PromptSkill {
+        id: "default.improve-ui".into(),
+        name: "improve-ui".into(),
+        display_name: "UI Polish & Improve (ibelick)".into(),
+        description: "Audit UI surfaces against design evidence, token consistency, and craftsmanship.".into(),
+        version: "1.0.0".into(),
+        author: "ibelick".into(),
+        source_url: "https://github.com/ibelick/ui-skills".into(),
+        tags: ["ui".into(), "polish".into(), "craft".into(), "design-system".into()].to_vec(),
+        is_default: true,
+        enabled: false,
+        prompt_content: "\
+# UI Polish & Improve (ibelick)
+
+- Audit product surfaces against their local design evidence: tokens, variables, themes, primitives, and compositions.
+- Strict proof gate: identify real contract violations (typography, color, spacing rhythm, layout, responsive presentation) rather than personal preference.
+- Coherence & Craft: eliminate micro-inconsistencies in padding, border radius, elevation, and component variants.
+- Never invent arbitrary values when the design system or context already establishes a rhythm.
+- Ensure actionable, self-contained implementation plans with exact tokens and reusable primitives."
+            .into(),
+    },
     ]
 });
 
@@ -238,7 +345,8 @@ impl PromptSkillStore {
     pub fn all(&self) -> Vec<PromptSkill> {
         let mut out: Vec<PromptSkill> = default_prompt_skills().to_vec();
         for stored in &self.skills {
-            match out.iter_mut().find(|s| s.id == stored.id || s.name == stored.name) {
+            let is_custom = stored.id.starts_with("custom-");
+            match out.iter_mut().find(|s| s.id == stored.id || (!is_custom && s.name == stored.name)) {
                 // A stored entry for a default only moves the switch.
                 Some(existing) => existing.enabled = stored.enabled,
                 None => {
@@ -335,6 +443,138 @@ pub fn active_names(skills: &[PromptSkill]) -> BTreeSet<String> {
     skills.iter().filter(|s| s.enabled).map(|s| s.name.clone()).collect()
 }
 
+/// Turn any GitHub repository, folder, or file URL into candidate raw Markdown URLs for SKILL.md and README.md.
+pub fn github_skill_candidate_urls(input: &str) -> Vec<String> {
+    let raw = input.trim().trim_end_matches('/');
+    if raw.is_empty() {
+        return Vec::new();
+    }
+    // Direct raw URL
+    if raw.starts_with("https://raw.githubusercontent.com/") || raw.starts_with("http://raw.githubusercontent.com/") {
+        return vec![raw.to_string()];
+    }
+
+    // Strip github.com prefix if present
+    let rest = if let Some(stripped) = raw.strip_prefix("https://github.com/") {
+        stripped
+    } else if let Some(stripped) = raw.strip_prefix("http://github.com/") {
+        stripped
+    } else {
+        // Not a github.com URL: if it's http/https, try as-is
+        if raw.starts_with("http://") || raw.starts_with("https://") {
+            return vec![raw.to_string()];
+        }
+        return Vec::new();
+    };
+
+    let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
+    if parts.len() < 2 {
+        return Vec::new();
+    }
+    let owner = parts[0];
+    let repo = parts[1];
+
+    // Check if it's a blob URL: /owner/repo/blob/branch/path...
+    if parts.len() >= 5 && parts[2] == "blob" {
+        let branch = parts[3];
+        let path = parts[4..].join("/");
+        return vec![format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}")];
+    }
+
+    // Check if it's a tree URL: /owner/repo/tree/branch/path...
+    if parts.len() >= 4 && parts[2] == "tree" {
+        let branch = parts[3];
+        let subpath = if parts.len() > 4 { parts[4..].join("/") } else { String::new() };
+        if subpath.is_empty() {
+            return vec![
+                format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/SKILL.md"),
+                format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/skills/improve-ui/SKILL.md"),
+                format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/README.md"),
+            ];
+        } else {
+            return vec![
+                format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{subpath}/SKILL.md"),
+                format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{subpath}/README.md"),
+                format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{subpath}"),
+            ];
+        }
+    }
+
+    // Repo root: /owner/repo
+    vec![
+        format!("https://raw.githubusercontent.com/{owner}/{repo}/main/SKILL.md"),
+        format!("https://raw.githubusercontent.com/{owner}/{repo}/main/skills/improve-ui/SKILL.md"),
+        format!("https://raw.githubusercontent.com/{owner}/{repo}/master/SKILL.md"),
+        format!("https://raw.githubusercontent.com/{owner}/{repo}/main/README.md"),
+        format!("https://raw.githubusercontent.com/{owner}/{repo}/master/README.md"),
+    ]
+}
+
+/// Parse a SKILL.md markdown text with YAML frontmatter into (name, description, prompt_content).
+pub fn parse_skill_markdown(text: &str, fallback_name: &str) -> (String, String, String) {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return (fallback_name.to_string(), String::new(), String::new());
+    }
+
+    // Check for YAML frontmatter between `---` and `---`
+    if let Some(rest) = trimmed.strip_prefix("---")
+        && let Some(end_idx) = rest.find("\n---")
+    {
+        let frontmatter = &rest[..end_idx];
+        let body = rest[end_idx + 4..].trim();
+
+        let mut name = String::new();
+        let mut desc = String::new();
+        let mut in_desc_block = false;
+
+        for line in frontmatter.lines() {
+            let line_trimmed = line.trim();
+            if line_trimmed.starts_with("name:") {
+                in_desc_block = false;
+                if let Some(val) = line_trimmed.strip_prefix("name:") {
+                    name = val.trim().trim_matches('"').trim_matches('\'').to_string();
+                }
+            } else if line_trimmed.starts_with("description:") {
+                if let Some(val) = line_trimmed.strip_prefix("description:") {
+                    let val = val.trim();
+                    if val == ">" || val == "|" {
+                        in_desc_block = true;
+                    } else {
+                        in_desc_block = false;
+                        desc = val.trim_matches('"').trim_matches('\'').to_string();
+                    }
+                }
+            } else if in_desc_block {
+                if line.starts_with(' ') || line.starts_with('\t') {
+                    if !desc.is_empty() {
+                        desc.push(' ');
+                    }
+                    desc.push_str(line.trim());
+                } else {
+                    in_desc_block = false;
+                }
+            }
+        }
+
+        let final_name = if name.is_empty() { fallback_name.to_string() } else { name };
+        return (final_name, desc, body.to_string());
+    }
+
+    // No frontmatter: check if first line is a markdown header `# Name`
+    let mut name = fallback_name.to_string();
+    let desc = String::new();
+    for line in trimmed.lines() {
+        let line_trimmed = line.trim();
+        if let Some(h) = line_trimmed.strip_prefix("# ") {
+            name = h.trim().to_string();
+            break;
+        }
+    }
+
+    (name, desc, trimmed.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,5 +653,32 @@ mod tests {
     #[test]
     fn no_active_skills_means_no_instructions() {
         assert_eq!(active_prompt_text(&[]), "");
+    }
+
+    #[test]
+    fn candidate_urls_generates_raw_github_urls() {
+        let urls = github_skill_candidate_urls("https://github.com/dickwu/apple-design-skill");
+        assert_eq!(urls[0], "https://raw.githubusercontent.com/dickwu/apple-design-skill/main/SKILL.md");
+
+        let raw = github_skill_candidate_urls("https://raw.githubusercontent.com/owner/repo/main/SKILL.md");
+        assert_eq!(raw, vec!["https://raw.githubusercontent.com/owner/repo/main/SKILL.md"]);
+
+        let blob = github_skill_candidate_urls("https://github.com/owner/repo/blob/main/skills/custom/SKILL.md");
+        assert_eq!(blob, vec!["https://raw.githubusercontent.com/owner/repo/main/skills/custom/SKILL.md"]);
+    }
+
+    #[test]
+    fn parse_skill_markdown_extracts_frontmatter_and_body() {
+        let md = "---\nname: my-skill\ndescription: A great skill\n---\n# My Skill\n\nRule 1.";
+        let (name, desc, body) = parse_skill_markdown(md, "fallback");
+        assert_eq!(name, "my-skill");
+        assert_eq!(desc, "A great skill");
+        assert_eq!(body, "# My Skill\n\nRule 1.");
+
+        let no_fm = "# Direct Skill\n\nJust rules.";
+        let (name, desc, body) = parse_skill_markdown(no_fm, "fallback");
+        assert_eq!(name, "Direct Skill");
+        assert_eq!(desc, "");
+        assert_eq!(body, no_fm);
     }
 }

@@ -63,12 +63,32 @@ fn tool_json(tool: &Tool) -> Value {
     json!({"name": tool.name, "description": tool.description, "parameters": tool.input_schema})
 }
 
+fn parse_data_url(data_url: &str) -> (&str, &str) {
+    if let Some(rest) = data_url.strip_prefix("data:")
+        && let Some((header, data)) = rest.split_once(";base64,")
+    {
+        return (header, data);
+    }
+    ("image/png", data_url)
+}
+
 /// The system text and the conversation, in the protocol's own shapes.
 fn system_and_contents(messages: &[ChatMessage]) -> (String, Vec<Value>) {
     let system = String::new();
     let mut out = Vec::new();
     for message in messages {
         match message.role {
+            Role::User if !message.images.is_empty() => {
+                let mut parts = Vec::new();
+                if !message.content.is_empty() {
+                    parts.push(json!({"text": message.content}));
+                }
+                for img in &message.images {
+                    let (mime, data) = parse_data_url(img);
+                    parts.push(json!({"inline_data": {"mime_type": mime, "data": data}}));
+                }
+                out.push(json!({"role": "user", "parts": parts}));
+            }
             Role::User => out.push(json!({"role": "user", "parts": [{"text": message.content}]})),
             Role::Assistant if message.tool_calls.is_empty() => out.push(json!({"role": "model", "parts": [{"text": message.content}]})),
             Role::Assistant => {
@@ -163,6 +183,20 @@ mod tests {
             request_url("https://generativelanguage.googleapis.com/v1beta/", "gemini-3.8-flash"),
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse"
         );
+    }
+
+    #[test]
+    fn a_user_message_with_images_formats_as_multimodal() {
+        let mut r = request();
+        r.messages = vec![ChatMessage::user_with_images(
+            "Check this design",
+            vec!["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==".into()],
+        )];
+        let body = request_body(&r);
+        let parts = &body["contents"][0]["parts"];
+        assert_eq!(parts[0]["text"], "Check this design");
+        assert_eq!(parts[1]["inline_data"]["mime_type"], "image/png");
+        assert_eq!(parts[1]["inline_data"]["data"], "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
     }
 
     #[test]

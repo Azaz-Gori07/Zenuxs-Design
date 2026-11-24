@@ -769,6 +769,29 @@ static SKILLS: std::sync::LazyLock<Vec<Skill>> = std::sync::LazyLock::new(|| {
         validation: rules(&["Every referenced id exists in the document.", "No runtime state is written into the document."]),
         examples: examples(&[("How is this file organised?", "the node graph, its pages and its components")]),
     },
+    Skill {
+        id: "systems.improve-ui".into(),
+        name: "improve-ui".into(),
+        category: SkillCategory::Systems,
+        description: "Audit UI surfaces against local design evidence: tokens, variables, primitives, and craftsmanship.".into(),
+        version: "1.0.0".into(),
+        triggers: ["improve ui", "ui audit", "design system audit", "polish ui", "ui-skills"].iter().map(|s| s.to_string()).collect(),
+        aliases: ["polish-ui", "audit-ui", "ui-polish"].iter().map(|s| s.to_string()).collect(),
+        requires: vec![],
+        defaults: defaults(&[("proof", "contract-runtime-correction"), ("scope", "coherent-surface")]),
+        operations: ["node.create", "node.set", "command.batch"].iter().map(|s| s.to_string()).collect(),
+        knowledge: [
+            "Audit product surfaces against their local design evidence: tokens, variables, themes, primitives, and compositions.",
+            "Strict proof gate: Contract (binding design rule), Runtime (traced path to surface), Correction (single deterministic change).",
+            "Eliminate micro-inconsistencies in padding, border radius, elevation, and component variants.",
+            "Never invent arbitrary values when the design system or context already establishes a rhythm.",
+        ].join("\n"),
+        validation: rules(&[
+            "Findings must be backed by concrete design evidence.",
+            "Corrections reuse existing tokens and primitives rather than inventing new values.",
+        ]),
+        examples: examples(&[("Audit the settings surface for UI consistency.", "trace rendered hierarchy and align mismatched tokens to design evidence")]),
+    },
     ]
 });
 
@@ -813,5 +836,8 @@ mod tests {
 
         let route = router.route("/break-ui", None);
         assert!(route.ordered.contains(&"patterns.break-ui".to_string()));
+
+        let route = router.route("/improve-ui", None);
+        assert!(route.ordered.contains(&"systems.improve-ui".to_string()));
     }
 }

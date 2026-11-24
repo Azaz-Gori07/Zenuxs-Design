@@ -175,7 +175,7 @@ pub fn kind_for(t: &str) -> Option<(NodeKind, &'static str)> {
         "arrow" => (NodeKind::Line, "Arrow"),
         "vector" | "path" => (NodeKind::Vector { network: VectorNetwork::default() }, "Vector"),
         "text" => (NodeKind::Text(TextData::default()), "Text"),
-        "frame" => (NodeKind::Frame, "Frame"),
+        "frame" | "card" | "button" | "container" => (NodeKind::Frame, "Frame"),
         "section" => (NodeKind::Section { contents_hidden: false }, "Section"),
         "component" => (NodeKind::Component { description: String::new(), props: Default::default(), prop_order: Vec::new() }, "Component"),
         "group" => (NodeKind::Group, "Group"),
@@ -269,7 +269,15 @@ fn vector_scale(width: Option<f64>, height: Option<f64>, bw: f64, bh: f64, what:
 pub fn create(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "node.create";
     let t = string(p, "type").ok_or_else(|| bad(cmd, "`type` is required"))?;
-    let (mut kind, base) = kind_for(&t).ok_or_else(|| bad(cmd, format!("unknown type `{t}`")))?;
+    let (mut kind, mut base) = kind_for(&t).ok_or_else(|| bad(cmd, format!("unknown type `{t}`")))?;
+    if matches!(kind, NodeKind::Rectangle)
+        && get(p, "props").is_some_and(|pr| {
+            pr.get("layout").is_some() || pr.get("layoutMode").is_some() || pr.get("autoLayout").is_some() || pr.get("direction").is_some()
+        })
+    {
+        kind = NodeKind::Frame;
+        base = "Frame";
+    }
     let page = s.page()?;
     let parent = crate::params::opt_id(cmd, p, "parent")?.unwrap_or(page);
     let doc = s.doc()?;

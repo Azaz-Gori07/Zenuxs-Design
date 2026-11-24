@@ -33,7 +33,9 @@ pub fn instead_of(name: &str) -> String {
     let has = |words: &[&str]| words.iter().any(|w| n.contains(w));
     // The image arm comes first: "get_image" and "find_photo" also read as lookups, and a model
     // told to call `get_node` for a picture goes looking for a file on disk instead.
-    let right = if has(&["icon", "icons", "symbol", "symbols"]) {
+    let right = if has(&["market", "component", "components", "shadcn", "originui", "prebuilt", "template", "widget"]) {
+        "search_market_components (to search 100% free prebuilt Shadcn components) or add_market_component_to_canvas (to place prebuilt components on canvas)"
+    } else if has(&["icon", "icons", "symbol", "symbols"]) {
         "search_icons (to search icons by query) or add_icon_to_canvas (to place a vector icon on canvas)"
     } else if has(&["image", "images", "photo", "photos", "picture", "stock", "asset"]) {
         "source_image, which searches the public libraries that need no key and places what the Vision model approves — one call for every image slot on the screen"
@@ -88,6 +90,26 @@ impl ChatTool {
     pub fn run(&self, s: &mut crate::Session, arguments: &Value) -> Result<Value, String> {
         match (self.command, self.name) {
             (Some("file.export"), _) => Ok(crate::chat_tools::export_without_a_file(s, arguments)?),
+            (Some("node.create"), "create_node") => {
+                let mut sanitized = arguments.clone();
+                if let Some(obj) = sanitized.as_object_mut() {
+                    let mut props = obj.remove("props").and_then(|p| p.as_object().cloned()).unwrap_or_default();
+                    let known =
+                        ["type", "x", "y", "width", "height", "parent", "index", "name", "text", "characters", "path", "points", "closed", "select"];
+                    let keys: Vec<String> = obj.keys().cloned().collect();
+                    for k in keys {
+                        if !known.contains(&k.as_str())
+                            && let Some(val) = obj.remove(&k)
+                        {
+                            props.insert(k, val);
+                        }
+                    }
+                    if !props.is_empty() {
+                        obj.insert("props".into(), Value::Object(props));
+                    }
+                }
+                s.execute_as(Some("AI"), "node.create", &sanitized).map_err(|e| e.to_string())
+            }
             (Some(id), _) => s.execute_as(Some("AI"), id, arguments).map_err(|e| e.to_string()),
             (None, "run_command") => {
                 let id = arguments.get("command").and_then(Value::as_str).unwrap_or_default().to_string();
@@ -102,6 +124,8 @@ impl ChatTool {
             (None, "inspect_document") => inspect(s, arguments),
             (None, "search_icons") => search_icons(arguments),
             (None, "add_icon_to_canvas") => add_icon_to_canvas(s, arguments),
+            (None, "search_market_components") => search_market_components(arguments),
+            (None, "add_market_component_to_canvas") => add_market_component_to_canvas(s, arguments),
             // `screenshot` and `review_design` render the document and hand the pixels to the
             // Vision model, which needs the network: `chat.rs` runs those on its worker with a
             // media session. Answered here only when something calls them without one.
@@ -357,6 +381,34 @@ static TABLE: std::sync::LazyLock<Vec<ChatTool>> = std::sync::LazyLock::new(|| {
             ),
             command: None,
         },
+        ChatTool {
+            name: "search_market_components",
+            description: "Search 100% Free Shadcn Community Marketplace Registry (@shadcn, @originui, @kibo, @cult, @animate-ui, @bundui, @neobrutalism) for prebuilt components (Buttons, Inputs, Cards, Charts, Kanban/Complex, Animations). ALWAYS SEARCH HERE FIRST before building custom UI from scratch.",
+            schema: obj(
+                json!({
+                    "query": s("The component name, category, or keyword (e.g. 'button', 'pricing card', 'revenue chart', 'kanban board', 'input')"),
+                    "category": s("Optional category: 'All', 'Buttons', 'Inputs', 'Cards', 'Charts', 'Kanban/Complex', 'Animations'"),
+                    "registry": s("Optional registry: '@shadcn', '@originui', '@kibo', '@cult', '@animate-ui', '@bundui', '@neobrutalism'"),
+                }),
+                &["query"],
+            ),
+            command: None,
+        },
+        ChatTool {
+            name: "add_market_component_to_canvas",
+            description: "Instantiate and place a prebuilt component from the Market Registry directly onto the active canvas. Adapts the component with custom text, titles, values, and brand color palette.",
+            schema: obj(
+                json!({
+                    "component_id": s("The ID of the Market component (e.g. '@shadcn/button', '@originui/pricing-card', '@kibo/kanban-board', '@shadcn/area-chart')"),
+                    "position": json!({"type": "object", "properties": {"x": n("X coordinate"), "y": n("Y coordinate")}, "description": "Optional canvas coordinates"}),
+                    "parent_frame_id": s("Optional parent container frame ID"),
+                    "custom_text": json!({"type": "object", "description": "Optional map of text replacements (e.g. {'Title': 'Revenue Analytics', 'Price': '$49/mo'})"}),
+                    "accent_color": s("Optional accent color hex or CSS string"),
+                }),
+                &["component_id"],
+            ),
+            command: None,
+        },
     ]
 });
 
@@ -514,6 +566,612 @@ fn add_icon_to_canvas(s: &mut crate::Session, arguments: &Value) -> Result<Value
         "x": x,
         "y": y
     }))
+}
+
+/// Search prebuilt components across 100% Free Shadcn ecosystem registries.
+fn search_market_components(arguments: &Value) -> Result<Value, String> {
+    let query = arguments.get("query").and_then(Value::as_str).unwrap_or_default().trim().to_lowercase();
+    let category = arguments.get("category").and_then(Value::as_str).unwrap_or("All").trim().to_lowercase();
+    let registry = arguments.get("registry").and_then(Value::as_str).unwrap_or("all").trim().to_lowercase();
+
+    let catalog = [
+        json!({
+            "id": "@shadcn/button",
+            "name": "Primary & Secondary Buttons",
+            "sourceRegistry": "@shadcn",
+            "category": "Buttons",
+            "description": "Accessible interactive buttons with focus rings, hover states, and variant styling.",
+            "tags": ["button", "action", "cta", "interactive", "primary", "shadcn"]
+        }),
+        json!({
+            "id": "@originui/button-shimmer",
+            "name": "Shimmer Border Button",
+            "sourceRegistry": "@originui",
+            "category": "Buttons",
+            "description": "High-polish interactive button featuring flowing gradient shine border and subtle glow.",
+            "tags": ["button", "shimmer", "gradient", "originui", "glow"]
+        }),
+        json!({
+            "id": "@neobrutalism/neo-button",
+            "name": "Neo-Brutalist Tactile Button",
+            "sourceRegistry": "@neobrutalism",
+            "category": "Buttons",
+            "description": "High-contrast retro button with 2.5px solid border, vibrant background, and hard drop shadow.",
+            "tags": ["button", "neobrutalism", "retro", "brutalist"]
+        }),
+        json!({
+            "id": "@cult/glow-button",
+            "name": "Cyberpunk Neon Glow Button",
+            "sourceRegistry": "@cult",
+            "category": "Buttons",
+            "description": "Vibrant neon illuminated button with pulsing radial backdrops and sleek dark background.",
+            "tags": ["button", "glow", "cyberpunk", "cult", "neon"]
+        }),
+        json!({
+            "id": "@shadcn/input",
+            "name": "Standard Text Input",
+            "sourceRegistry": "@shadcn",
+            "category": "Inputs",
+            "description": "Clean accessible text input with subtle border, focus ring, and placeholder styling.",
+            "tags": ["input", "form", "text", "field", "shadcn"]
+        }),
+        json!({
+            "id": "@originui/input-search-kbd",
+            "name": "Search Bar with Keyboard Shortcut",
+            "sourceRegistry": "@originui",
+            "category": "Inputs",
+            "description": "Search input integrated with search icon prefix and dynamic ⌘K keyboard shortcut indicator.",
+            "tags": ["search", "input", "shortcut", "kbd", "originui"]
+        }),
+        json!({
+            "id": "@kibo/tags-input",
+            "name": "Multi-Tag Filter Input",
+            "sourceRegistry": "@kibo",
+            "category": "Inputs",
+            "description": "Interactive chips container allowing users to add, select, and dismiss tags in form fields.",
+            "tags": ["tags", "chips", "input", "multiselect", "kibo"]
+        }),
+        json!({
+            "id": "@shadcn/card-metric",
+            "name": "Metric KPI Stat Card",
+            "sourceRegistry": "@shadcn",
+            "category": "Cards",
+            "description": "Executive dashboard KPI metric card with title, large numeric value, and percentage trend pill.",
+            "tags": ["card", "metric", "stat", "kpi", "dashboard", "shadcn"]
+        }),
+        json!({
+            "id": "@originui/pricing-card",
+            "name": "Tiered Pricing Feature Card",
+            "sourceRegistry": "@originui",
+            "category": "Cards",
+            "description": "Highlighted subscription pricing card with Most Popular ribbon, feature checklist, and primary CTA.",
+            "tags": ["pricing", "card", "subscription", "originui", "marketing"]
+        }),
+        json!({
+            "id": "@cult/bento-card",
+            "name": "Bento Grid Showcase Card",
+            "sourceRegistry": "@cult",
+            "category": "Cards",
+            "description": "Modern Apple/Bento-style visual showcase card with subtle gradient background and icon highlight.",
+            "tags": ["bento", "card", "showcase", "cult", "apple"]
+        }),
+        json!({
+            "id": "@shadcn/area-chart",
+            "name": "Interactive Revenue Area Chart",
+            "sourceRegistry": "@shadcn",
+            "category": "Charts",
+            "description": "Clean area chart card displaying revenue growth curves with gradient fills and date axes.",
+            "tags": ["chart", "area", "analytics", "revenue", "graph", "shadcn"]
+        }),
+        json!({
+            "id": "@originui/donut-chart",
+            "name": "Category Distribution Donut",
+            "sourceRegistry": "@originui",
+            "category": "Charts",
+            "description": "Circular donut chart visualizing market share breakdown and legend labels.",
+            "tags": ["donut", "pie", "chart", "analytics", "distribution", "originui"]
+        }),
+        json!({
+            "id": "@kibo/kanban-board",
+            "name": "Multi-Column Kanban Board",
+            "sourceRegistry": "@kibo",
+            "category": "Kanban/Complex",
+            "description": "Agile project tracking board with columns (To Do, In Progress, Done) and draggable task cards.",
+            "tags": ["kanban", "board", "tasks", "agile", "project", "kibo"]
+        }),
+        json!({
+            "id": "@bundui/data-table",
+            "name": "Interactive Data Table",
+            "sourceRegistry": "@bundui",
+            "category": "Kanban/Complex",
+            "description": "High-density enterprise table layout with sorting headers, user avatars, and status badges.",
+            "tags": ["table", "data", "grid", "bundui", "complex", "enterprise"]
+        }),
+        json!({
+            "id": "@animate-ui/marquee-ticker",
+            "name": "Infinite Marquee Ticker Ribbon",
+            "sourceRegistry": "@animate-ui",
+            "category": "Animations",
+            "description": "Continuous horizontal scrolling banner ribbon for partner logos, metrics, or announcements.",
+            "tags": ["marquee", "animation", "ticker", "ribbon", "animate-ui"]
+        }),
+        json!({
+            "id": "@animate-ui/spotlight-card",
+            "name": "Cursor Tracking Spotlight Card",
+            "sourceRegistry": "@animate-ui",
+            "category": "Animations",
+            "description": "Card with dynamic radial gradient spotlight that smoothly follows mouse movement.",
+            "tags": ["spotlight", "animation", "cursor", "gradient", "animate-ui"]
+        }),
+    ];
+
+    let matches: Vec<Value> = catalog
+        .into_iter()
+        .filter(|item| {
+            if category != "all" {
+                let cat = item.get("category").and_then(Value::as_str).unwrap_or("").to_lowercase();
+                if cat != category {
+                    return false;
+                }
+            }
+            if registry != "all" {
+                let reg = item.get("sourceRegistry").and_then(Value::as_str).unwrap_or("").to_lowercase();
+                if reg != registry {
+                    return false;
+                }
+            }
+            if !query.is_empty() {
+                let name = item.get("name").and_then(Value::as_str).unwrap_or("").to_lowercase();
+                let desc = item.get("description").and_then(Value::as_str).unwrap_or("").to_lowercase();
+                let id = item.get("id").and_then(Value::as_str).unwrap_or("").to_lowercase();
+                let in_tags = item
+                    .get("tags")
+                    .and_then(Value::as_array)
+                    .map(|arr| arr.iter().any(|t| t.as_str().unwrap_or("").to_lowercase().contains(&query)))
+                    .unwrap_or(false);
+                return name.contains(&query) || desc.contains(&query) || id.contains(&query) || in_tags;
+            }
+            true
+        })
+        .collect();
+
+    Ok(json!(matches))
+}
+
+fn add_child_frame(s: &mut crate::Session, parent: &Value, name: &str, w: f64, h: f64, props: Value) -> Option<Value> {
+    let params = json!({
+        "type": "frame",
+        "name": name,
+        "width": w,
+        "height": h,
+        "parent": parent,
+        "props": props
+    });
+    s.execute_as(Some("AI"), "node.create", &params).ok()
+}
+
+fn add_child_text(
+    s: &mut crate::Session,
+    parent: &Value,
+    name: &str,
+    text: &str,
+    font_size: f64,
+    font_weight: i64,
+    color: &str,
+) -> Option<Value> {
+    let params = json!({
+        "type": "text",
+        "name": name,
+        "parent": parent,
+        "text": text,
+        "characters": text,
+        "props": {
+            "fontSize": font_size,
+            "fontWeight": font_weight,
+            "fills": [{"type": "solid", "color": color}]
+        }
+    });
+    s.execute_as(Some("AI"), "node.create", &params).ok()
+}
+
+fn add_child_ellipse(
+    s: &mut crate::Session,
+    parent: &Value,
+    name: &str,
+    size: f64,
+    stroke_color: &str,
+    stroke_width: f64,
+    fill_color: &str,
+) -> Option<Value> {
+    let params = json!({
+        "type": "ellipse",
+        "name": name,
+        "parent": parent,
+        "width": size,
+        "height": size,
+        "props": {
+            "fills": [{"type": "solid", "color": fill_color}],
+            "strokes": [{"type": "solid", "color": stroke_color, "width": stroke_width}]
+        }
+    });
+    s.execute_as(Some("AI"), "node.create", &params).ok()
+}
+
+fn build_button_children(s: &mut crate::Session, r_id: &Value, comp_id: &str, get_text: &dyn Fn(&str, &str) -> String) {
+    if comp_id == "@originui/button-shimmer" || comp_id.contains("shimmer") {
+        let label = get_text("Label", "✨ Explore Features");
+        let _ = add_child_text(s, r_id, "Label", &label, 14.0, 600, "#93c5fd");
+    } else if comp_id == "@neobrutalism/neo-button" || comp_id.contains("neo") {
+        let label = get_text("Label", "Neo Action ⚡");
+        let _ = add_child_text(s, r_id, "Label", &label, 14.0, 700, "#000000");
+    } else if comp_id == "@cult/glow-button" || comp_id.contains("glow") {
+        let label = get_text("Label", "Launch Mission →");
+        let _ = add_child_text(s, r_id, "Label", &label, 14.0, 600, "#f472b6");
+    } else {
+        let label = get_text("Label", "Get Started →");
+        let _ = add_child_text(s, r_id, "Label", &label, 14.0, 600, "#ffffff");
+    }
+}
+
+fn build_input_children(s: &mut crate::Session, r_id: &Value, comp_id: &str, get_text: &dyn Fn(&str, &str) -> String) {
+    if comp_id == "@originui/input-search-kbd" || comp_id.contains("search") {
+        let _ = add_child_text(s, r_id, "Search Icon", "🔍", 13.0, 400, "#64748b");
+        let ph = get_text("Placeholder", "Search components...");
+        let _ = add_child_text(s, r_id, "Placeholder", &ph, 13.0, 400, "#94a3b8");
+        let badge = add_child_frame(
+            s,
+            r_id,
+            "Badge ⌘K",
+            32.0,
+            22.0,
+            json!({"layout": "horizontal", "cornerRadius": 4.0, "fills": [{"type": "solid", "color": "#f1f5f9"}], "strokes": [{"type": "solid", "color": "#cbd5e1", "width": 1.0}], "padding": [2.0, 6.0, 2.0, 6.0]}),
+        );
+        if let Some(b) = badge.and_then(|v| v.get("id").cloned()) {
+            let _ = add_child_text(s, &b, "Kbd", "⌘K", 11.0, 600, "#64748b");
+        }
+    } else if comp_id == "@kibo/tags-input" || comp_id.contains("tag") {
+        let tag1 = add_child_frame(
+            s,
+            r_id,
+            "Tag / React",
+            68.0,
+            28.0,
+            json!({"cornerRadius": 6.0, "fills": [{"type": "solid", "color": "#f3e8ff"}], "padding": [4.0, 8.0, 4.0, 8.0]}),
+        );
+        if let Some(t) = tag1.and_then(|v| v.get("id").cloned()) {
+            let _ = add_child_text(s, &t, "Tag Text", "React ✕", 12.0, 600, "#7e22ce");
+        }
+        let tag2 = add_child_frame(
+            s,
+            r_id,
+            "Tag / Tailwind",
+            82.0,
+            28.0,
+            json!({"cornerRadius": 6.0, "fills": [{"type": "solid", "color": "#e0e7ff"}], "padding": [4.0, 8.0, 4.0, 8.0]}),
+        );
+        if let Some(t) = tag2.and_then(|v| v.get("id").cloned()) {
+            let _ = add_child_text(s, &t, "Tag Text", "Tailwind ✕", 12.0, 600, "#4338ca");
+        }
+        let _ = add_child_text(s, r_id, "Input Prompt", "Add tag...", 12.0, 400, "#94a3b8");
+    } else {
+        let ph = get_text("Placeholder", "Enter email address...");
+        let _ = add_child_text(s, r_id, "Placeholder", &ph, 13.0, 400, "#94a3b8");
+    }
+}
+
+fn build_card_children(s: &mut crate::Session, r_id: &Value, comp_id: &str, get_text: &dyn Fn(&str, &str) -> String) {
+    if comp_id == "@originui/pricing-card" || comp_id.contains("pricing") {
+        let br = add_child_frame(s, r_id, "Badge Row", 240.0, 24.0, json!({"layout": "horizontal", "itemSpacing": 8.0}));
+        if let Some(b_row) = br.and_then(|v| v.get("id").cloned()) {
+            let plan = get_text("Plan", "Pro Plan");
+            let _ = add_child_text(s, &b_row, "Plan Name", &plan, 18.0, 700, "#0f172a");
+            let b_pill = add_child_frame(
+                s,
+                &b_row,
+                "Badge",
+                96.0,
+                22.0,
+                json!({"cornerRadius": 10.0, "fills": [{"type": "solid", "color": "#4f46e5"}], "padding": [3.0, 8.0, 3.0, 8.0]}),
+            );
+            if let Some(bp) = b_pill.and_then(|v| v.get("id").cloned()) {
+                let _ = add_child_text(s, &bp, "Popular", "MOST POPULAR", 10.0, 700, "#ffffff");
+            }
+        }
+        let price = get_text("Price", "$29 / month");
+        let _ = add_child_text(s, r_id, "Price", &price, 30.0, 800, "#0f172a");
+        let _ = add_child_text(s, r_id, "Feature 1", "✓ Unlimited canvas layers & assets", 12.0, 500, "#475569");
+        let _ = add_child_text(s, r_id, "Feature 2", "✓ Real-time collaboration & sync", 12.0, 500, "#475569");
+        let _ = add_child_text(s, r_id, "Feature 3", "✓ Priority AI market component solver", 12.0, 500, "#475569");
+        let cta = add_child_frame(
+            s,
+            r_id,
+            "CTA Button",
+            240.0,
+            40.0,
+            json!({"layout": "horizontal", "cornerRadius": 10.0, "fills": [{"type": "solid", "color": "#4f46e5"}], "padding": [10.0, 18.0, 10.0, 18.0]}),
+        );
+        if let Some(c) = cta.and_then(|v| v.get("id").cloned()) {
+            let cta_text = get_text("CTA", "Get Started Now");
+            let _ = add_child_text(s, &c, "Button Label", &cta_text, 14.0, 600, "#ffffff");
+        }
+    } else if comp_id == "@cult/bento-card" || comp_id.contains("bento") {
+        let ib = add_child_frame(
+            s,
+            r_id,
+            "Icon Box",
+            44.0,
+            44.0,
+            json!({"cornerRadius": 10.0, "fills": [{"type": "solid", "color": "#312e81"}], "strokes": [{"type": "solid", "color": "#4338ca", "width": 1.0}], "padding": [10.0, 10.0, 10.0, 10.0]}),
+        );
+        if let Some(i) = ib.and_then(|v| v.get("id").cloned()) {
+            let _ = add_child_text(s, &i, "Icon Symbol", "✦", 18.0, 400, "#a5b4fc");
+        }
+        let heading = get_text("Heading", "Intelligent AI Layouts");
+        let _ = add_child_text(s, r_id, "Heading", &heading, 16.0, 700, "#ffffff");
+        let desc = get_text("Description", "Automatic layout engine that aligns and spaces design tokens with precision.");
+        let _ = add_child_text(s, r_id, "Description", &desc, 12.0, 400, "#a3a3a3");
+    } else {
+        let title = get_text("Title", "Total Revenue");
+        let value = get_text("Value", "$45,231.89");
+        let trend = get_text("Trend", "+20.1% from last month");
+        let _ = add_child_text(s, r_id, "Title", &title, 13.0, 500, "#64748b");
+        let _ = add_child_text(s, r_id, "Metric Value", &value, 26.0, 700, "#0f172a");
+        let _ = add_child_text(s, r_id, "Trend Subtitle", &trend, 12.0, 600, "#059669");
+    }
+}
+
+fn build_chart_children(s: &mut crate::Session, r_id: &Value, comp_id: &str, get_text: &dyn Fn(&str, &str) -> String) {
+    if comp_id == "@originui/donut-chart" || comp_id.contains("donut") {
+        let lc = add_child_frame(s, r_id, "Labels Column", 140.0, 90.0, json!({"layout": "vertical", "itemSpacing": 6.0}));
+        if let Some(l) = lc.and_then(|v| v.get("id").cloned()) {
+            let _ = add_child_text(s, &l, "Title", "Traffic Sources", 14.0, 700, "#0f172a");
+            let _ = add_child_text(s, &l, "Direct", "● Direct: 65%", 12.0, 500, "#4f46e5");
+            let _ = add_child_text(s, &l, "Social", "● Organic: 35%", 12.0, 500, "#10b981");
+        }
+        let _ = add_child_ellipse(s, r_id, "Donut Circle", 70.0, "#4f46e5", 8.0, "#e0e7ff");
+    } else {
+        let title = get_text("Title", "Revenue Growth Overview");
+        let _ = add_child_text(s, r_id, "Chart Title", &title, 15.0, 700, "#0f172a");
+        let bc = add_child_frame(
+            s,
+            r_id,
+            "Chart Bars Container",
+            280.0,
+            100.0,
+            json!({"layout": "horizontal", "itemSpacing": 14.0, "padding": [10.0, 10.0, 0.0, 10.0]}),
+        );
+        if let Some(b) = bc.and_then(|v| v.get("id").cloned()) {
+            let bars = [("Bar Jan", 45.0, "#818cf8"), ("Bar Feb", 60.0, "#6366f1"), ("Bar Mar", 75.0, "#4f46e5"), ("Bar Apr", 70.0, "#4338ca"), ("Bar May", 95.0, "#3730a3")];
+            for (bn, bh, bc_col) in bars {
+                let _ = add_child_frame(s, &b, bn, 28.0, bh, json!({"cornerRadius": 4.0, "fills": [{"type": "solid", "color": bc_col}]}));
+            }
+        }
+    }
+}
+
+fn build_complex_children(s: &mut crate::Session, r_id: &Value, comp_id: &str) {
+    if comp_id == "@bundui/data-table" || comp_id.contains("table") {
+        let th = add_child_frame(
+            s,
+            r_id,
+            "Table Header",
+            380.0,
+            36.0,
+            json!({"layout": "horizontal", "fills": [{"type": "solid", "color": "#f8fafc"}], "padding": [10.0, 16.0, 10.0, 16.0]}),
+        );
+        if let Some(h) = th.and_then(|v| v.get("id").cloned()) {
+            let _ = add_child_text(s, &h, "H User", "NAME / USER", 11.0, 700, "#64748b");
+            let _ = add_child_text(s, &h, "H Role", "ROLE", 11.0, 700, "#64748b");
+            let _ = add_child_text(s, &h, "H Status", "STATUS", 11.0, 700, "#64748b");
+        }
+        let tr = add_child_frame(
+            s,
+            r_id,
+            "Row 1",
+            380.0,
+            48.0,
+            json!({"layout": "horizontal", "padding": [12.0, 16.0, 12.0, 16.0]}),
+        );
+        if let Some(r) = tr.and_then(|v| v.get("id").cloned()) {
+            let _ = add_child_text(s, &r, "User 1", "Sarah Chen", 13.0, 600, "#0f172a");
+            let _ = add_child_text(s, &r, "Role 1", "Lead Designer", 12.0, 400, "#475569");
+            let badge = add_child_frame(
+                s,
+                &r,
+                "Badge Active",
+                56.0,
+                22.0,
+                json!({"cornerRadius": 10.0, "fills": [{"type": "solid", "color": "#d1fae5"}]}),
+            );
+            if let Some(b) = badge.and_then(|v| v.get("id").cloned()) {
+                let _ = add_child_text(s, &b, "Status", "ACTIVE", 10.0, 700, "#065f46");
+            }
+        }
+    } else {
+        let cols = [
+            ("Column / To Do", "📋 TO DO (3)", "#475569", "Card 1", "Design Market UI", "#f1f5f9", "#334155"),
+            ("Column / In Progress", "⚡ IN PROGRESS (2)", "#f59e0b", "Card 2", "AI Market Priority", "#fef3c7", "#b45309"),
+            ("Column / Done", "✓ DONE (5)", "#10b981", "Card 3", "Shadcn Registries", "#d1fae5", "#047857"),
+        ];
+        for (c_name, c_hdr, hdr_color, card_name, task_title, card_bg, task_color) in cols {
+            let col = add_child_frame(
+                s,
+                r_id,
+                c_name,
+                136.0,
+                220.0,
+                json!({"layout": "vertical", "itemSpacing": 10.0, "padding": [12.0, 12.0, 12.0, 12.0], "cornerRadius": 10.0, "fills": [{"type": "solid", "color": "#ffffff"}], "strokes": [{"type": "solid", "color": "#e2e8f0", "width": 1.0}]}),
+            );
+            if let Some(cf) = col.and_then(|v| v.get("id").cloned()) {
+                let _ = add_child_text(s, &cf, "Col Header", c_hdr, 12.0, 700, hdr_color);
+                let card = add_child_frame(
+                    s,
+                    &cf,
+                    card_name,
+                    112.0,
+                    50.0,
+                    json!({"cornerRadius": 6.0, "fills": [{"type": "solid", "color": card_bg}], "padding": [8.0, 8.0, 8.0, 8.0]}),
+                );
+                if let Some(cd) = card.and_then(|v| v.get("id").cloned()) {
+                    let _ = add_child_text(s, &cd, "Task", task_title, 11.0, 500, task_color);
+                }
+            }
+        }
+    }
+}
+
+fn build_animation_children(s: &mut crate::Session, r_id: &Value, comp_id: &str, get_text: &dyn Fn(&str, &str) -> String) {
+    if comp_id == "@animate-ui/marquee-ticker" || comp_id.contains("marquee") {
+        let _ = add_child_text(s, r_id, "Item 1", "⚡ 100% Free Registries", 13.0, 700, "#34d399");
+        let _ = add_child_text(s, r_id, "Item 2", "✦ Shadcn Ecosystem", 13.0, 600, "#ffffff");
+        let _ = add_child_text(s, r_id, "Item 3", "🚀 Instant Canvas Drop", 13.0, 600, "#60a5fa");
+    } else {
+        let title = get_text("Title", "Interactive Spotlight");
+        let sub = get_text("Subtitle", "Smooth radial focus tracking your pointer across canvas elements.");
+        let _ = add_child_text(s, r_id, "Title", &title, 15.0, 700, "#f8fafc");
+        let _ = add_child_text(s, r_id, "Subtitle", &sub, 12.0, 400, "#94a3b8");
+    }
+}
+
+fn market_component_spec(comp_id: &str) -> (&'static str, f64, f64, Value, f64, Option<&'static str>, &'static str, f64, Value) {
+    if comp_id == "@shadcn/button" || (comp_id.contains("button") && !comp_id.contains("shimmer") && !comp_id.contains("neo") && !comp_id.contains("glow")) {
+        ("Button / Primary", 140.0, 40.0, json!([{"type": "solid", "color": "#18181b"}]), 8.0, None, "horizontal", 8.0, json!([10.0, 18.0, 10.0, 18.0]))
+    } else if comp_id == "@originui/button-shimmer" || comp_id.contains("shimmer") {
+        ("Button / Shimmer", 154.0, 42.0, json!([{"type": "solid", "color": "#090d16"}]), 10.0, Some("#3b82f6"), "horizontal", 8.0, json!([11.0, 20.0, 11.0, 20.0]))
+    } else if comp_id == "@neobrutalism/neo-button" || comp_id.contains("neo") {
+        ("Button / Neobrutalism", 136.0, 42.0, json!([{"type": "solid", "color": "#fde047"}]), 6.0, Some("#000000"), "horizontal", 6.0, json!([10.0, 16.0, 10.0, 16.0]))
+    } else if comp_id == "@cult/glow-button" || comp_id.contains("glow") {
+        ("Button / Cyber Glow", 160.0, 42.0, json!([{"type": "solid", "color": "#13041c"}]), 8.0, Some("#ec4899"), "horizontal", 8.0, json!([10.0, 20.0, 10.0, 20.0]))
+    } else if comp_id == "@shadcn/input" || (comp_id.contains("input") && !comp_id.contains("search") && !comp_id.contains("tag")) {
+        ("Input / Text Field", 240.0, 42.0, json!([{"type": "solid", "color": "#ffffff"}]), 6.0, Some("#cbd5e1"), "horizontal", 8.0, json!([10.0, 14.0, 10.0, 14.0]))
+    } else if comp_id == "@originui/input-search-kbd" || comp_id.contains("search") {
+        ("Input / Search with ⌘K", 280.0, 44.0, json!([{"type": "solid", "color": "#ffffff"}]), 8.0, Some("#e2e8f0"), "horizontal", 10.0, json!([10.0, 14.0, 10.0, 14.0]))
+    } else if comp_id == "@kibo/tags-input" || comp_id.contains("tag") {
+        ("Input / Tag Chips", 280.0, 48.0, json!([{"type": "solid", "color": "#ffffff"}]), 8.0, Some("#e2e8f0"), "horizontal", 8.0, json!([8.0, 12.0, 8.0, 12.0]))
+    } else if comp_id == "@shadcn/card-metric" || comp_id.contains("metric") {
+        ("Card / Metric KPI", 260.0, 130.0, json!([{"type": "solid", "color": "#ffffff"}]), 12.0, Some("#e2e8f0"), "vertical", 8.0, json!([18.0, 20.0, 18.0, 20.0]))
+    } else if comp_id == "@originui/pricing-card" || comp_id.contains("pricing") {
+        ("Card / Pricing Highlight", 280.0, 310.0, json!([{"type": "solid", "color": "#ffffff"}]), 16.0, Some("#4f46e5"), "vertical", 12.0, json!([20.0, 20.0, 20.0, 20.0]))
+    } else if comp_id == "@cult/bento-card" || comp_id.contains("bento") {
+        ("Card / Bento Showcase", 280.0, 200.0, json!([{"type": "solid", "color": "#171717"}]), 16.0, Some("#2e2e2e"), "vertical", 12.0, json!([22.0, 22.0, 22.0, 22.0]))
+    } else if comp_id == "@shadcn/area-chart" || comp_id.contains("area") {
+        ("Chart / Revenue Area Curve", 320.0, 180.0, json!([{"type": "solid", "color": "#ffffff"}]), 12.0, Some("#e2e8f0"), "vertical", 12.0, json!([16.0, 20.0, 16.0, 20.0]))
+    } else if comp_id == "@originui/donut-chart" || comp_id.contains("donut") {
+        ("Chart / Donut Distribution", 260.0, 130.0, json!([{"type": "solid", "color": "#ffffff"}]), 12.0, Some("#e2e8f0"), "horizontal", 14.0, json!([16.0, 20.0, 16.0, 20.0]))
+    } else if comp_id == "@kibo/kanban-board" || comp_id.contains("kanban") {
+        ("Kanban / Sprint Board", 480.0, 260.0, json!([{"type": "solid", "color": "#f8fafc"}]), 14.0, Some("#e2e8f0"), "horizontal", 16.0, json!([16.0, 16.0, 16.0, 16.0]))
+    } else if comp_id == "@bundui/data-table" || comp_id.contains("table") {
+        ("Table / Data Grid", 380.0, 160.0, json!([{"type": "solid", "color": "#ffffff"}]), 10.0, Some("#e2e8f0"), "vertical", 0.0, json!([0.0, 0.0, 0.0, 0.0]))
+    } else if comp_id == "@animate-ui/marquee-ticker" || comp_id.contains("marquee") {
+        ("Animation / Marquee Banner", 360.0, 44.0, json!([{"type": "solid", "color": "#171717"}]), 8.0, None, "horizontal", 18.0, json!([12.0, 18.0, 12.0, 18.0]))
+    } else if comp_id == "@animate-ui/spotlight-card" || comp_id.contains("spotlight") {
+        ("Animation / Spotlight Card", 260.0, 140.0, json!([{"type": "solid", "color": "#0f172a"}]), 14.0, Some("#334155"), "vertical", 10.0, json!([18.0, 18.0, 18.0, 18.0]))
+    } else {
+        ("Market / Component", 260.0, 140.0, json!([{"type": "solid", "color": "#ffffff"}]), 12.0, Some("#e2e8f0"), "vertical", 8.0, json!([16.0, 16.0, 16.0, 16.0]))
+    }
+}
+
+/// Place a prebuilt Market component directly onto the canvas with high-fidelity styling and sub-components.
+pub fn instantiate_market_component(
+    s: &mut crate::Session,
+    comp_id: &str,
+    x: f64,
+    y: f64,
+    parent: Option<&str>,
+    custom_text: Option<&serde_json::Map<String, Value>>,
+) -> Result<Value, String> {
+    let get_text = |key: &str, fallback: &str| -> String {
+        custom_text
+            .and_then(|ct| ct.get(key))
+            .and_then(Value::as_str)
+            .unwrap_or(fallback)
+            .to_string()
+    };
+
+    let (name, width, height, fills, corner_radius, stroke, layout_mode, item_spacing, padding) = market_component_spec(comp_id);
+
+    let mut frame_props = json!({
+        "layout": layout_mode,
+        "layoutMode": layout_mode,
+        "itemSpacing": item_spacing,
+        "padding": padding,
+        "cornerRadius": corner_radius,
+        "fills": fills,
+    });
+
+    if let Some(st) = stroke {
+        let width = if comp_id.contains("neo") || comp_id.contains("pricing") { 2.0 } else { 1.5 };
+        frame_props["strokes"] = json!([{"type": "solid", "color": st, "width": width}]);
+    }
+
+    let mut create_params = json!({
+        "type": "frame",
+        "name": name,
+        "x": x,
+        "y": y,
+        "width": width,
+        "height": height,
+        "props": frame_props
+    });
+
+    if let (Some(p), Some(obj)) = (parent, create_params.as_object_mut()) {
+        obj.insert("parent".into(), json!(p));
+    }
+
+    let root = s.execute_as(Some("AI"), "node.create", &create_params).map_err(|e| e.to_string())?;
+    let root_id = root.get("id").cloned();
+
+    if let Some(r_id) = &root_id {
+        if comp_id.contains("button") {
+            build_button_children(s, r_id, comp_id, &get_text);
+        } else if comp_id.contains("input") || comp_id.contains("search") || comp_id.contains("tag") {
+            build_input_children(s, r_id, comp_id, &get_text);
+        } else if comp_id.contains("metric") || comp_id.contains("pricing") || comp_id.contains("bento") {
+            build_card_children(s, r_id, comp_id, &get_text);
+        } else if comp_id.contains("chart") || comp_id.contains("area") || comp_id.contains("donut") {
+            build_chart_children(s, r_id, comp_id, &get_text);
+        } else if comp_id.contains("kanban") || comp_id.contains("table") {
+            build_complex_children(s, r_id, comp_id);
+        } else if comp_id.contains("marquee") || comp_id.contains("spotlight") {
+            build_animation_children(s, r_id, comp_id, &get_text);
+        } else {
+            let title = get_text("Title", &format!("Component {comp_id}"));
+            let _ = add_child_text(s, r_id, "Title", &title, 14.0, 700, "#0f172a");
+            let _ = add_child_text(s, r_id, "Desc", "Shadcn ecosystem prebuilt element ready to customize.", 12.0, 400, "#64748b");
+        }
+    }
+
+    Ok(json!({
+        "id": root_id,
+        "component_id": comp_id,
+        "status": "inserted",
+        "name": name,
+        "x": x,
+        "y": y,
+        "width": width,
+        "height": height
+    }))
+}
+
+/// Place a prebuilt Market component directly onto the canvas with customization.
+fn add_market_component_to_canvas(s: &mut crate::Session, arguments: &Value) -> Result<Value, String> {
+    let comp_id = arguments.get("component_id").and_then(Value::as_str).unwrap_or_default().trim();
+    if comp_id.is_empty() {
+        return Err("`component_id` is required".into());
+    }
+
+    let parent =
+        arguments.get("parent_frame_id").and_then(|v| if let Some(i) = v.as_i64() { Some(i.to_string()) } else { v.as_str().map(str::to_string) });
+
+    let (mut x, mut y) = (160.0, 120.0);
+    if let Some(pos) = arguments.get("position") {
+        x = pos.get("x").and_then(Value::as_f64).unwrap_or(x);
+        y = pos.get("y").and_then(Value::as_f64).unwrap_or(y);
+    }
+
+    let custom_text = arguments.get("custom_text").and_then(Value::as_object);
+
+    instantiate_market_component(s, comp_id, x, y, parent.as_deref(), custom_text)
 }
 
 /// `list_commands`' answer: one compact line per command, narrowed by `filter`.
@@ -886,5 +1544,59 @@ mod tests {
             .expect("insert runs");
         assert!(inserted.get("id").is_some());
         assert_eq!(inserted["icon_id"], "fa6-solid:star");
+    }
+
+    #[test]
+    fn market_tools_search_and_add_to_canvas() {
+        let mut s = crate::Session::empty();
+        let _ = s.execute("file.new", &json!({}));
+        let frame = s.execute("node.create", &json!({"type": "frame", "width": 800, "height": 600})).expect("a frame");
+        let frame_id = frame["id"].as_i64().expect("frame id");
+
+        // 1. Search market tool
+        let search = table().iter().find(|t| t.name == "search_market_components").expect("search_market_components tool");
+        let results = search.run(&mut s, &json!({"query": "kanban"})).expect("search runs");
+        let list = results.as_array().expect("array of components");
+        assert!(list.iter().any(|v| v["id"].as_str() == Some("@kibo/kanban-board")));
+
+        // 2. Add market component tool
+        let add = table().iter().find(|t| t.name == "add_market_component_to_canvas").expect("add_market_component_to_canvas tool");
+        let inserted = add
+            .run(
+                &mut s,
+                &json!({
+                    "component_id": "@kibo/kanban-board",
+                    "parent_frame_id": frame_id,
+                    "position": {"x": 50, "y": 50},
+                    "custom_text": {"Title": "Sprint 42 Kanban"}
+                }),
+            )
+            .expect("insert runs");
+        assert!(inserted.get("id").is_some());
+        assert_eq!(inserted["component_id"], "@kibo/kanban-board");
+
+        // 3. Verify Button component has white text and child label
+        let btn_inserted = add
+            .run(
+                &mut s,
+                &json!({
+                    "component_id": "@shadcn/button",
+                    "position": {"x": 100, "y": 100},
+                    "custom_text": {"Label": "Checkout Now"}
+                }),
+            )
+            .expect("button insert runs");
+        let btn_id_val = btn_inserted.get("id").expect("btn id");
+        let btn_id = crate::params::id_of(btn_id_val).expect("node id");
+        let doc = s.doc().expect("doc");
+        let btn_node = doc.node(btn_id).expect("btn node");
+        assert_eq!(btn_node.name, "Button / Primary");
+        assert!(!btn_node.children.is_empty(), "button must have child text");
+        let child_text = doc.node(btn_node.children[0]).expect("child text node");
+        if let figcraft_doc::NodeKind::Text(td) = &child_text.kind {
+            assert_eq!(td.characters, "Checkout Now");
+        } else {
+            panic!("child node should be text");
+        }
     }
 }

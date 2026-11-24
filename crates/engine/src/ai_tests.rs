@@ -193,6 +193,20 @@ fn a_person_can_write_a_standing_instruction() {
 }
 
 #[test]
+fn install_skill_from_markdown_parses_and_registers() {
+    let mut s = session();
+    let md = "---\nname: github-skill\ndescription: A downloaded skill\n---\n# GitHub Skill\n\nRule 1: Always polish UI.";
+    let out = run(&mut s, "ai.skill.installMarkdown", json!({"markdown": md, "url": "https://github.com/test/repo"})).expect("installed");
+    assert_eq!(out["name"], "github-skill");
+    assert_eq!(out["description"], "A downloaded skill");
+
+    let listed = run(&mut s, "ai.skills", json!({})).expect("skills listed");
+    let found = listed["skills"].as_array().expect("skills").iter().find(|k| k["name"] == "github-skill").expect("found");
+    assert_eq!(found["enabled"], true);
+    assert_eq!(found["isDefault"], false);
+}
+
+#[test]
 fn the_usage_starts_empty_and_can_be_cleared() {
     let mut s = session();
     let out = run(&mut s, "ai.usage", json!({})).expect("the usage is answered");

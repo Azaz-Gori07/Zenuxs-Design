@@ -46,6 +46,16 @@ fn input(messages: &[ChatMessage]) -> Vec<Value> {
     let mut out = Vec::new();
     for message in messages {
         match message.role {
+            Role::User if !message.images.is_empty() => {
+                let mut content = Vec::new();
+                if !message.content.is_empty() {
+                    content.push(json!({"type": "input_text", "text": message.content}));
+                }
+                for img in &message.images {
+                    content.push(json!({"type": "input_image", "image_url": img}));
+                }
+                out.push(json!({"role": "user", "content": content}));
+            }
             Role::User => out.push(json!({"role": "user", "content": [{"type": "input_text", "text": message.content}]})),
             Role::Assistant if message.tool_calls.is_empty() => {
                 out.push(json!({"role": "assistant", "content": [{"type": "output_text", "text": message.content}]}))
@@ -163,6 +173,21 @@ mod tests {
         assert_eq!(body["reasoning"]["effort"], "low");
         assert_eq!(body["input"][0]["role"], "user");
         assert_eq!(body["tools"][0]["name"], "run_command");
+    }
+
+    #[test]
+    fn a_user_message_with_images_formats_as_multimodal() {
+        let mut r = request();
+        r.messages = vec![ChatMessage::user_with_images(
+            "Check this design",
+            vec!["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==".into()],
+        )];
+        let body = request_body(&r);
+        let content = &body["input"][0]["content"];
+        assert_eq!(content[0]["type"], "input_text");
+        assert_eq!(content[0]["text"], "Check this design");
+        assert_eq!(content[1]["type"], "input_image");
+        assert_eq!(content[1]["image_url"], "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
     }
 
     #[test]

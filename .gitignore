@@ -11,3 +11,7 @@ plans/
 *.profraw
 .cache/
 .vscode/
+node_modules/
+frontend/node_modules/
+frontend/dist/
+/*.figcraft

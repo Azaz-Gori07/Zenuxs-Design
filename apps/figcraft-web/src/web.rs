@@ -17,16 +17,6 @@ const RECOVERY_KEY: &str = "figcraft.recovery";
 /// AI connections with their models and keys. The same `{"prefs": …}` shape the desktop keeps in
 /// its state file, so a settings export moves between the app and the page unchanged.
 const PREFS_KEY: &str = "figcraft.prefs";
-/// The model configuration FigCraft starts with on a page that has none.
-///
-/// The browser build has no settings file to read, so without this the page opens with no model
-/// and the chat says "No model". One free, keyless-by-design endpoint is seeded instead, and any
-/// model the person sets replaces it.
-const SEED_MODEL: &str = "deepseek-v4.1-flash-free";
-const SEED_ENDPOINT: &str = "http://127.0.0.1:20129/v1";
-/// The key the seeded endpoint expects, and the only key seeded.
-const SEED_KEY: &str = "public";
-
 thread_local! {
     /// The files with unsaved changes as of the last frame, for the panic hook ([`crate::recovery`]).
     static UNSAVED: std::cell::RefCell<crate::recovery::Unsaved> = std::cell::RefCell::default();
@@ -80,12 +70,11 @@ pub fn start() {
                         session.prefs.publish_server = server;
                     }
                     crate::kept::restore_name(&mut session, local_storage().and_then(|s| s.get_item(NAME_KEY).ok().flatten()));
-                    // The preferences, and the model the chat needs: a page starts with neither.
-                    restore_prefs(&mut session, local_storage().and_then(|s| s.get_item(PREFS_KEY).ok().flatten()));
                     // Keys live in a page's memory, as the credential store says: nothing secret
                     // is written to disk, and a reload asks for them again.
                     session.credentials = Some(Box::new(figcraft_ai::credentials::MemoryCredentialStore::new()));
-                    seed_key(&mut session);
+                    // The preferences, and the model the chat needs: a page starts with neither.
+                    restore_prefs(&mut session, local_storage().and_then(|s| s.get_item(PREFS_KEY).ok().flatten()));
                     let recovered = restore_unsaved(&mut session);
                     // Live sessions: the browser joins sessions and publishes files to servers;
                     // whatever arrives on the socket wakes the page for a frame.
@@ -141,7 +130,7 @@ pub fn start() {
         if let Some(el) = document.get_element_by_id(LOADING_ID) {
             match result {
                 Ok(()) => el.remove(),
-                Err(e) => el.set_inner_html(&format!("<p>FigCraft failed to start: {e:?}</p><p>A browser with WebGPU or WebGL2 is required.</p>")),
+                Err(e) => el.set_inner_html(&format!("<p>sycnUI failed to start: {e:?}</p><p>A browser with WebGPU or WebGL2 is required.</p>")),
             }
         }
     });
@@ -313,6 +302,9 @@ impl Services for WebServices {
     fn clipboard_set_png(&mut self, w: u32, h: u32, rgba: &[u8]) {
         figcraft_ui_egui::egui_copy_png(&self.ctx, w, h, rgba);
     }
+    fn clipboard_get_text(&mut self) -> Option<String> {
+        crate::pasted::get_clipboard_text()
+    }
     fn clipboard_get_png(&mut self) -> Option<Vec<u8>> {
         crate::pasted::take_png()
     }
@@ -373,78 +365,21 @@ impl Services for WebServices {
     fn ask_for_local_fonts(&mut self) {
         crate::local_fonts::ask(self.ctx.clone());
     }
+    fn fetch_url(&mut self, url: &str) -> Option<figcraft_ui_egui::TextFetchFuture> {
+        let url_owned = url.to_string();
+        Some(Box::pin(async move {
+            figcraft_ai_net::fetch_text_async(&url_owned).await
+        }))
+    }
 }
 
 /// The preferences a page keeps, or the model it starts with when it has none.
-///
-/// A page has no settings file, so the model the chat needs would otherwise be missing on every
-/// first visit and the panel would say "No model" with nothing to do about it. One free endpoint
-/// is seeded, marked as this build's own so it is easy to replace, and never over a model the
-/// person has already chosen.
 fn restore_prefs(session: &mut Session, kept: Option<String>) {
     let saved = kept.as_deref().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok());
     if let Some(prefs) = saved.as_ref().and_then(|v| v.get("prefs")).and_then(|p| serde_json::from_value::<figcraft_engine::Prefs>(p.clone()).ok()) {
         session.prefs = prefs;
-        return;
     }
-    seed_model(&mut session.prefs);
-}
-
-/// One endpoint and one model, so a first visit can talk to a provider.
-///
-/// It is written as an ordinary compatible connection and profile, the same shape the AI & Agents
-/// page edits, so replacing or removing it is the same work as changing any other model.
-fn seed_model(prefs: &mut figcraft_engine::Prefs) {
-    use figcraft_ai::models::{AIModelAssignments, AIModelCapability, AIModelConnection, AIModelProfile, AIModelSettings, APIType};
-    use figcraft_ai::providers::ProviderId;
-    let models = &mut prefs.ai.models;
-    if !models.connections.is_empty() || !models.models.is_empty() {
-        return;
-    }
-    let connection = AIModelConnection {
-        id: "connection-page".into(),
-        provider: ProviderId::OpenaiCompatible,
-        custom_base_url: SEED_ENDPOINT.into(),
-        custom_api_type: APIType::Completions,
-        credential_profile_id: String::new(),
-    };
-    let profile = AIModelProfile {
-        id: "model-page".into(),
-        name: SEED_MODEL.into(),
-        connection_id: connection.id.clone(),
-        model_id: SEED_MODEL.into(),
-        custom_model_id: String::new(),
-        max_output_tokens: 8192,
-        reasoning_effort: None,
-        capabilities: vec![AIModelCapability::Tools],
-    };
-    *models = AIModelSettings {
-        version: 1,
-        connections: vec![connection],
-        models: vec![profile],
-        assignments: AIModelAssignments {
-            design: "model-page".into(),
-            review: "model-page".into(),
-            fast: "model-page".into(),
-            // Vision too: without it `source_image` cannot verify a candidate and every picture
-            // slot stays empty, which is the one thing a design cannot fake.
-            vision: "model-page".into(),
-        },
-    };
-}
-
-/// The seeded model's key.
-///
-/// The key a seeded connection uses is the one the seeded endpoint expects; it is written into
-/// the page's memory store, never into storage, so it is not persisted anywhere.
-fn seed_key(session: &mut Session) {
-    let Some(store) = session.credentials.as_mut() else { return };
-    let Some(connection) = session.prefs.ai.models.connections.iter().find(|c| c.id == "connection-page").cloned() else { return };
-    let reference = figcraft_engine::cmd::ai::credential_ref_for(&connection);
-    if store.read(&reference).ok().flatten().is_some_and(|k| !k.trim().is_empty()) {
-        return;
-    }
-    let _ = store.write(&reference, SEED_KEY);
+    figcraft_engine::ai::seed_defaults(&mut session.prefs, session.credentials.as_mut());
 }
 
 /// The file picked in the browser's file picker (`accept`: the extensions it offers), with its

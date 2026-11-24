@@ -90,6 +90,27 @@ fn a_standing_instruction_is_written_and_switched_on() {
 }
 
 #[test]
+fn skills_tab_shows_standing_instructions_and_github_input() {
+    let mut u = ui();
+    u.app.ui.ai_settings.open = true;
+    u.app.ui.ai_settings.tab = crate::dialogs::ai_settings::Tab::Skills;
+    u.frame(vec![]);
+    // Default skills are in standing instructions
+    let skills = u.app.session.prefs.ai.skills.all();
+    assert!(skills.iter().any(|s| s.name == "apple-design"));
+    assert!(skills.iter().any(|s| s.name == "improve-ui"));
+
+    // Simulating install markdown command
+    let md = "---\nname: my-gh-skill\ndescription: downloaded\n---\n# My GH Skill\nRule.";
+    let res = u.app.session.execute("ai.skill.installMarkdown", &json!({
+        "markdown": md,
+        "url": "https://github.com/owner/repo"
+    })).expect("skill installed");
+    assert_eq!(res["name"], "my-gh-skill");
+    assert!(u.app.session.prefs.ai.skills.all().iter().any(|s| s.name == "my-gh-skill"));
+}
+
+#[test]
 fn the_usage_tab_says_nothing_yet_before_any_request() {
     let mut u = ui();
     u.run("ai.settings", json!({}));

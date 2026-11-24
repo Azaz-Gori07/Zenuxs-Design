@@ -363,6 +363,7 @@ impl FigApp {
                         LeftTab::File => i18n::tr("Layers"),
                         LeftTab::Assets => i18n::tr("Assets"),
                         LeftTab::Icons => "Icons",
+                        LeftTab::Market => "Market",
                     };
                     a11y::region(&mut self.ui.nav, ui, a11y::Region::Layers, egui::accesskit::Role::Pane, label);
                     layers::left_panel(self, ui)

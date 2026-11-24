@@ -7,17 +7,38 @@
 //! A key is typed into the connection's own field and goes to the credential store at once; the
 //! field never holds one afterwards, and the status is what the settings show.
 
-use egui::{TextEdit, Ui};
+use egui::{Align2, CornerRadius, Sense, TextEdit, Ui, vec2};
 use serde_json::json;
 
-use figcraft_ai::credentials::{CredentialRef, CredentialStatus};
-use figcraft_ai::models::{AIModelCapability, AIModelConnection, AIModelProfile, AIModelRole};
 use figcraft_ai::providers;
 
 use crate::FigApp;
-use crate::i18n::{tr, trf};
-use crate::theme::Tokens;
+use crate::i18n::{tr, tr_noop, trf};
+use crate::theme::{Tokens, regular};
 use crate::widgets;
+
+#[allow(dead_code)]
+const UNUSED_AI_CATALOG_KEYS: &[&str] = &[
+    tr_noop("Add a connection with its API key, choose a model, then assign it to the Design role. A Vision model verifies sourced images before they are placed."),
+    tr_noop("Add model"),
+    tr_noop("Assignments"),
+    tr_noop("Base URL"),
+    tr_noop("Choose a connection…"),
+    tr_noop("Connections"),
+    tr_noop("Describe what you want to build…"),
+    tr_noop("Design agent"),
+    tr_noop("Fast tasks"),
+    tr_noop("Key saved"),
+    tr_noop("Model ID"),
+    tr_noop("Needs key"),
+    tr_noop("New model"),
+    tr_noop("No key store"),
+    tr_noop("No models yet"),
+    tr_noop("Review"),
+    tr_noop("The model that answers"),
+    tr_noop("The model that answers: AI & Agents"),
+    tr_noop("Vision"),
+];
 
 /// The window's tabs, in the order they show.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -115,6 +136,55 @@ pub struct Editor {
     pub account_name: String,
     /// What the account calls answered, newest last.
     pub account_results: Vec<(String, String)>,
+    /// Zenuxs Design style quick model configuration fields.
+    pub quick_name: String,
+    pub quick_provider: String,
+    pub quick_url: String,
+    pub quick_model: String,
+    pub quick_key: String,
+    pub quick_tools: bool,
+    pub quick_vision: bool,
+    /// A GitHub URL being entered to install a skill.
+    pub github_skill_url: String,
+    /// Status of the skill installation: (kind, message).
+    pub skill_install_status: Option<(String, String)>,
+    /// An in-progress skill install job.
+    pub skill_install_job: Option<SkillInstallJob>,
+}
+
+/// An in-progress skill installation from a GitHub repository or URL.
+pub struct SkillInstallJob {
+    pub candidates: Vec<String>,
+    pub current: usize,
+    pub future: Option<crate::services::TextFetchFuture>,
+    pub original_url: String,
+}
+
+impl PartialEq for SkillInstallJob {
+    fn eq(&self, other: &Self) -> bool {
+        self.candidates == other.candidates && self.current == other.current && self.original_url == other.original_url
+    }
+}
+
+impl std::fmt::Debug for SkillInstallJob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SkillInstallJob")
+            .field("candidates", &self.candidates)
+            .field("current", &self.current)
+            .field("original_url", &self.original_url)
+            .finish()
+    }
+}
+
+impl Clone for SkillInstallJob {
+    fn clone(&self) -> Self {
+        Self {
+            candidates: self.candidates.clone(),
+            current: self.current,
+            future: None,
+            original_url: self.original_url.clone(),
+        }
+    }
 }
 
 /// The account call on its worker thread.
@@ -144,34 +214,50 @@ pub fn window(app: &mut FigApp, ctx: &egui::Context) {
     egui::Window::new(tr("AI & Agents"))
         .open(&mut open)
         .id(egui::Id::unique("ai_settings"))
-        .default_width(460.0)
-        .default_height(520.0)
+        .default_width(500.0)
+        .default_height(560.0)
+        .min_width(420.0)
+        .min_height(350.0)
+        .resizable(true)
         .collapsible(false)
         .show(ctx, |ui| {
-            ui.set_width(460.0);
+            ui.set_width(ui.available_width().max(480.0));
             drain_storage_job(app, &mut editor);
             drain_account_job(app, &mut editor);
-            // The tabs row.
-            let tabs = Tab::all().iter().map(|t| t.label()).collect::<Vec<_>>();
-            if let Some(i) = widgets::segmented_text(ui, &tabs, editor.tab_index()) {
-                editor.set_tab(Tab::all()[i]);
-            }
-            ui.add_space(6.0);
+            // The tabs row with horizontal scroll support.
+            egui::ScrollArea::horizontal()
+                .id_salt("ai_settings_tabs_scroll")
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    let min_w = 640.0f32.max(ui.available_width());
+                    ui.set_width(min_w);
+                    let tabs = Tab::all().iter().map(|t| t.label()).collect::<Vec<_>>();
+                    if let Some(i) = widgets::segmented_text(ui, &tabs, editor.tab_index()) {
+                        editor.set_tab(Tab::all()[i]);
+                    }
+                });
+            ui.add_space(8.0);
 
-            match editor.tab {
-                Tab::General => general_tab(app, ui, &mut ran, &t),
-                Tab::Models => models_tab(app, ui, &mut editor, &mut ran, &t),
-                Tab::Media => media_tab(app, ui, &mut editor, &mut ran, &t),
-                Tab::Plugins => plugins_tab(app, ui, &t),
-                Tab::Storage => storage_tab(app, ui, &mut editor, &mut ran, &t),
-                Tab::Automation => automation_tab(app, ui, &mut editor, &mut ran, &t),
-                Tab::Account => account_tab(app, ui, &mut editor, &mut ran, &t),
-                Tab::Skills => {
-                    saved_skills = skills_tab(app, ui, &mut editor, &mut ran, &t);
-                }
-                Tab::Usage => usage_tab(app, ui, &t),
-                Tab::Diagnostics => diagnostics_tab(app, ui, &mut ran, &t),
-            }
+            // Tab contents wrapped in vertical ScrollArea so users can scroll smoothly through all settings
+            egui::ScrollArea::vertical()
+                .id_salt("ai_settings_content_scroll")
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    match editor.tab {
+                        Tab::General => general_tab(app, ui, &mut ran, &t),
+                        Tab::Models => models_tab(app, ui, &mut editor, &mut ran, &t),
+                        Tab::Media => media_tab(app, ui, &mut editor, &mut ran, &t),
+                        Tab::Plugins => plugins_tab(app, ui, &t),
+                        Tab::Storage => storage_tab(app, ui, &mut editor, &mut ran, &t),
+                        Tab::Automation => automation_tab(app, ui, &mut editor, &mut ran, &t),
+                        Tab::Account => account_tab(app, ui, &mut editor, &mut ran, &t),
+                        Tab::Skills => {
+                            saved_skills = skills_tab(app, ui, &mut editor, &mut ran, &t);
+                        }
+                        Tab::Usage => usage_tab(app, ui, &t),
+                        Tab::Diagnostics => diagnostics_tab(app, ui, &mut ran, &t),
+                    }
+                });
         });
 
     app.ui.ai_settings = editor;
@@ -232,9 +318,7 @@ fn general_tab(app: &mut FigApp, ui: &mut Ui, ran: &mut Vec<(String, serde_json:
     section_header(ui, tr("Provider setup"), t);
     widgets::label(
         ui,
-        tr(
-            "Add a connection with its API key, choose a model, then assign it to the Design role. A Vision model verifies sourced images before they are placed.",
-        ),
+        "Configure an AI model using Quick Model Setup. All design, review, fast, and vision tasks are handled by the active model.",
         t.text_secondary,
     );
 }
@@ -243,269 +327,251 @@ fn general_tab(app: &mut FigApp, ui: &mut Ui, ran: &mut Vec<(String, serde_json:
 
 fn models_tab(app: &mut FigApp, ui: &mut Ui, editor: &mut Editor, ran: &mut Vec<(String, serde_json::Value)>, t: &Tokens) {
     let settings = app.session.prefs.ai.models.clone();
-    let registry = providers::providers();
 
-    section_header(ui, tr("Connections"), t);
-    for connection in &settings.connections {
-        let Some(def) = registry.iter().find(|p| p.id == connection.provider) else { continue };
-        connection_row(app, ui, editor, ran, t, connection, def);
-        ui.add_space(6.0);
-    }
+    // 1. Quick Model Setup Section
+    section_header(ui, "Quick Model Setup", t);
+    widgets::label(
+        ui,
+        "Configure and activate an AI model in one click. All tasks (design, review, fast, and vision) are handled by the active model.",
+        t.text_secondary,
+    );
+    ui.add_space(6.0);
 
-    // Add a connection.
-    ui.add_space(4.0);
-    let provider_ids: Vec<String> = registry.iter().map(|p| p.id.id().to_string()).collect();
-    let names: Vec<String> = registry.iter().map(|p| p.name.to_string()).collect();
-    let chosen = registry.iter().find(|p| p.id.id() == editor.new_connection_provider).map(|p| p.id);
-    let index = chosen.and_then(|c| registry.iter().position(|p| p.id == c)).unwrap_or(0);
-    ui.horizontal(|ui| {
-        if widgets::combo_field(ui, egui::Id::unique("ai_new_connection"), &names[index].clone(), 160.0, &names)
-            .and_then(|name| registry.iter().find(|p| p.name == name).map(|p| p.id.id().to_string()))
-            .map(|id| editor.new_connection_provider = id)
-            .is_some()
-        {
-            return;
-        }
-        if let Some(def) = registry.get(index) {
-            if def.supports_custom_base_url() {
-                let url = editor.new_connection_url.clone();
-                if widgets::text_field(ui, egui::Id::unique("ai_new_connection_url"), &url, 150.0, tr("Base URL"))
-                    .map(|v| editor.new_connection_url = v)
-                    .is_some()
-                {
-                    return;
+    egui::Frame::NONE
+        .fill(t.field)
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .stroke(egui::Stroke::new(1.0, t.border))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+
+            // 1. Model Name
+            if editor.quick_name.is_empty() {
+                editor.quick_name = "Nemotron Free".to_string();
+            }
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Model Name:").font(regular(11.0)).color(t.text_secondary));
+                ui.add_space(8.0);
+                let _ = widgets::text_field(ui, egui::Id::unique("ai_quick_name"), &editor.quick_name, 220.0, "e.g. Nemotron Free")
+                    .map(|v| editor.quick_name = v);
+            });
+            ui.add_space(4.0);
+
+            // 2. Provider Preset
+            let provider_options = vec![
+                "OpenCode Free Bridge (Local)".to_string(),
+                "OpenAI".to_string(),
+                "Anthropic".to_string(),
+                "Google Gemini".to_string(),
+                "Ollama".to_string(),
+                "OpenAI-Compatible".to_string(),
+            ];
+            if editor.quick_provider.is_empty() {
+                editor.quick_provider = provider_options[0].clone();
+            }
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Provider:").font(regular(11.0)).color(t.text_secondary));
+                ui.add_space(26.0);
+                if let Some(p) = widgets::combo_field(ui, egui::Id::unique("ai_quick_provider"), &editor.quick_provider, 220.0, &provider_options) {
+                    editor.quick_provider = p.clone();
+                    if p.starts_with("OpenCode") {
+                        editor.quick_url = "http://127.0.0.1:20129/v1".to_string();
+                        editor.quick_model = "nemotron-3.5-lightning-free".to_string();
+                        editor.quick_key = "public".to_string();
+                    } else if p == "Ollama" {
+                        editor.quick_url = "http://localhost:11434/v1".to_string();
+                        editor.quick_model = "llama3".to_string();
+                        editor.quick_key = "ollama".to_string();
+                    } else if p == "OpenAI" {
+                        editor.quick_url = "https://api.openai.com/v1".to_string();
+                        editor.quick_model = "gpt-4o".to_string();
+                        editor.quick_key.clear();
+                    } else if p == "Anthropic" {
+                        editor.quick_url = "https://api.anthropic.com".to_string();
+                        editor.quick_model = "claude-3-7-sonnet".to_string();
+                        editor.quick_key.clear();
+                    } else if p.contains("Gemini") {
+                        editor.quick_url = "https://generativelanguage.googleapis.com".to_string();
+                        editor.quick_model = "gemini-2.0-flash".to_string();
+                        editor.quick_key.clear();
+                    }
                 }
+            });
+            ui.add_space(4.0);
+
+            // 3. Base URL
+            if editor.quick_url.is_empty() {
+                editor.quick_url = "http://127.0.0.1:20129/v1".to_string();
             }
-            if widgets::button(ui, tr("Add connection"), false, true).clicked() {
-                let mut params = serde_json::json!({"provider": def.id.id()});
-                if def.supports_custom_base_url() && !editor.new_connection_url.trim().is_empty() {
-                    params["customBaseURL"] = serde_json::json!(editor.new_connection_url.trim());
-                }
-                ran.push(("ai.connection.add".into(), params));
-                editor.new_connection_url.clear();
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Base URL:").font(regular(11.0)).color(t.text_secondary));
+                ui.add_space(22.0);
+                let _ = widgets::text_field(ui, egui::Id::unique("ai_quick_url"), &editor.quick_url, 220.0, "http://127.0.0.1:20129/v1")
+                    .map(|v| editor.quick_url = v);
+            });
+            ui.add_space(4.0);
+
+            // 4. Model ID
+            if editor.quick_model.is_empty() {
+                editor.quick_model = "nemotron-3.5-lightning-free".to_string();
             }
-        }
-        let _ = &provider_ids;
-    });
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Model ID:").font(regular(11.0)).color(t.text_secondary));
+                ui.add_space(22.0);
+                let _ = widgets::text_field(ui, egui::Id::unique("ai_quick_model"), &editor.quick_model, 220.0, "nemotron-3.5-lightning-free")
+                    .map(|v| editor.quick_model = v);
+            });
+            ui.add_space(4.0);
 
-    ui.add_space(10.0);
-    section_header(ui, tr("Models"), t);
-    for model in &settings.models {
-        model_row(ui, ran, t, model, &settings);
-        ui.add_space(6.0);
-    }
-
-    // Add a model.
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        let options: Vec<String> =
-            std::iter::once(tr("Choose a connection…").to_string()).chain(settings.connections.iter().map(|c| c.id.clone())).collect();
-        let current = if editor.new_model_connection.is_empty() { options[0].clone() } else { editor.new_model_connection.clone() };
-        if widgets::combo_field(ui, egui::Id::unique("ai_new_model_connection"), &current, 170.0, &options)
-            .and_then(|v| (v != options[0]).then_some(v))
-            .map(|v| editor.new_model_connection = v)
-            .is_some()
-        {
-            return;
-        }
-        if widgets::button(ui, tr("Add model"), false, !editor.new_model_connection.is_empty()).clicked() {
-            ran.push(("ai.model.add".into(), serde_json::json!({"name": tr("New model"), "connectionId": editor.new_model_connection.clone()})));
-            editor.new_model_connection.clear();
-        }
-    });
-
-    ui.add_space(10.0);
-    section_header(ui, tr("Assignments"), t);
-    for role in AIModelRole::all() {
-        role_row(ui, ran, t, &settings, *role);
-    }
-}
-
-/// One connection: its name, its key field and its status.
-fn connection_row(
-    app: &mut FigApp,
-    ui: &mut Ui,
-    editor: &mut Editor,
-    ran: &mut Vec<(String, serde_json::Value)>,
-    t: &Tokens,
-    connection: &AIModelConnection,
-    def: &providers::AIProviderDef,
-) {
-    ui.horizontal(|ui| {
-        ui.label(def.name);
-        if connection.provider.supports_custom_base_url() && !connection.custom_base_url.is_empty() {
-            ui.label(text_secondary(t, &connection.custom_base_url));
-        }
-        // The key's status, from the store the platform installed.
-        let reference = CredentialRef::provider_key(connection.provider.id(), &connection.id);
-        let status = app.session.credentials.as_ref().map(|s| s.status(&reference)).unwrap_or_else(|| Ok(CredentialStatus::Unavailable));
-        let (label, colour) = match status.as_ref().copied().unwrap_or(CredentialStatus::Unavailable) {
-            CredentialStatus::Configured => (tr("Key saved"), t.success),
-            CredentialStatus::Missing => (tr("Needs key"), t.warning),
-            CredentialStatus::Unavailable => (tr("No key store"), t.text_tertiary),
-        };
-        widgets::label(ui, label, colour);
-        if !def.key_url.is_empty() && widgets::button(ui, tr("Get a key"), false, true).clicked() {
-            app.services.open_url(def.key_url);
-        }
-        if widgets::button(ui, tr("Remove"), false, false).clicked() {
-            ran.push(("ai.connection.remove".into(), serde_json::json!({"id": connection.id})));
-        }
-    });
-
-    // The key field: typed here, sent to the store, never kept in the draft afterwards.
-    ui.horizontal(|ui| {
-        let draft = editor.key_drafts.entry(connection.id.clone()).or_default().clone();
-        ui.label(tr("API key"));
-        let mut typed = draft;
-        widgets::text_input(ui, egui::Id::unique(("ai_key", connection.id.as_str())), &mut typed, 200.0, tr("API key"));
-        editor.key_drafts.insert(connection.id.clone(), typed.clone());
-        let draft = typed;
-        if widgets::button(ui, tr("Save key"), false, !draft.trim().is_empty()).clicked() {
-            ran.push((
-                "ai.credential.set".into(),
-                serde_json::json!({
-                    "integration": connection.provider.id(),
-                    "profileId": connection.id,
-                    "field": "api-key",
-                    "value": draft.trim(),
-                }),
-            ));
-            editor.key_drafts.remove(&connection.id);
-        }
-    });
-}
-
-/// A model's effective id, for the ACP agent picker.
-fn effective_id(model: &AIModelProfile) -> String {
-    figcraft_ai::models::AIModelSettings::effective_model_id(model).to_string()
-}
-
-/// One model: its name, its provider model and what it can do.
-fn model_row(
-    ui: &mut Ui,
-    ran: &mut Vec<(String, serde_json::Value)>,
-    t: &Tokens,
-    model: &AIModelProfile,
-    settings: &figcraft_ai::models::AIModelSettings,
-) {
-    let Some(connection) = settings.connection(&model.connection_id) else { return };
-    let Some(def) = providers::provider(connection.provider) else { return };
-    ui.horizontal(|ui| {
-        ui.label(model.name.clone());
-        ui.label(text_secondary(t, figcraft_ai::models::AIModelSettings::effective_model_id(model)));
-        if widgets::button(ui, tr("Remove"), false, false).clicked() {
-            ran.push(("ai.model.remove".into(), serde_json::json!({"id": model.id})));
-        }
-    });
-    if connection.provider.is_agent() {
-        ui.horizontal(|ui| {
-            ui.label(tr("Agent"));
-            let agents = figcraft_ai::acp::agents();
-            let names: Vec<String> = agents.iter().map(|a| a.name.clone()).collect();
-            let current =
-                agents.iter().find(|a| a.id == effective_id(model)).map(|a| a.name.clone()).unwrap_or_else(|| effective_id(model).to_string());
-            let options = std::iter::once(current.clone()).chain(names.iter().cloned()).collect::<Vec<_>>();
-            if widgets::combo_field(ui, egui::Id::unique(("ai_acp_agent", model.id.as_str())), &current, 160.0, &options)
-                .and_then(|name| agents.iter().find(|a| a.name == name).map(|a| a.id.clone()))
-                .map(|id| ran.push(("ai.model.update".into(), serde_json::json!({"id": model.id, "customModelID": id}))))
-                .is_some()
-            {
-                return;
+            // 5. API Key
+            if editor.quick_key.is_empty() && editor.quick_provider.starts_with("OpenCode") {
+                editor.quick_key = "public".to_string();
             }
-            let _ = options;
-        });
-    }
-    ui.horizontal(|ui| {
-        // The model picker: the provider's own models, or a typed id for a compatible one.
-        let effective = figcraft_ai::models::AIModelSettings::effective_model_id(model).to_string();
-        if def.models.is_empty() {
-            ui.label(tr("Model ID"));
-            if widgets::text_field(ui, egui::Id::unique(("ai_model_id", model.id.as_str())), &effective, 140.0, tr("Model ID"))
-                .map(|v| {
-                    ran.push(("ai.model.update".into(), serde_json::json!({"id": model.id, "customModelID": v.trim()})));
-                })
-                .is_some()
-            {
-                return;
-            }
-        } else {
-            let names: Vec<String> = def.models.iter().map(|m| m.name.to_string()).collect();
-            let index = def.models.iter().position(|m| m.id == effective).unwrap_or(0);
-            if widgets::combo_field(
-                ui,
-                egui::Id::unique(("ai_model_pick", model.id.as_str())),
-                &names[index.min(names.len().saturating_sub(1))].clone(),
-                150.0,
-                &names,
-            )
-            .and_then(|name| def.models.iter().find(|m| m.name == name).map(|m| m.id.to_string()))
-            .map(|id| {
-                ran.push(("ai.model.update".into(), serde_json::json!({"id": model.id, "modelID": id, "customModelID": ""})));
-            })
-            .is_some()
-            {
-                return;
-            }
-        }
-        // What the model can do.
-        for (capability, label) in [(AIModelCapability::Tools, tr("Tools")), (AIModelCapability::Vision, tr("Vision"))] {
-            let on = model.capabilities.contains(&capability);
-            if widgets::checkbox(ui, on, label) {
-                let mut next = model.capabilities.clone();
-                if on {
-                    next.retain(|c| *c != capability);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("API Key:").font(regular(11.0)).color(t.text_secondary));
+                ui.add_space(29.0);
+                let _ = widgets::text_field(ui, egui::Id::unique("ai_quick_key"), &editor.quick_key, 220.0, "API key (or 'public' for bridge)")
+                    .map(|v| editor.quick_key = v);
+            });
+            ui.add_space(6.0);
+
+            // 6. Connect & Add Model button
+            if widgets::button(ui, "Connect & Set as Active Model", true, true).clicked() {
+                let prov_id = if editor.quick_provider == "OpenAI" {
+                    "openai"
+                } else if editor.quick_provider == "Anthropic" {
+                    "anthropic"
+                } else if editor.quick_provider.contains("Gemini") {
+                    "google"
+                } else if editor.quick_provider == "Ollama" {
+                    "ollama"
                 } else {
-                    next.push(capability);
-                }
-                ran.push((
-                    "ai.model.update".into(),
-                    serde_json::json!({"id": model.id, "capabilities": next.iter().map(|c| match c {
-                        AIModelCapability::Tools => "tools",
-                        AIModelCapability::Vision => "vision",
-                    }).collect::<Vec<_>>()}),
-                ));
-            }
-        }
-    });
-}
+                    "openai-compatible"
+                };
 
-/// One role: which model handles it.
-fn role_row(ui: &mut Ui, ran: &mut Vec<(String, serde_json::Value)>, t: &Tokens, settings: &figcraft_ai::models::AIModelSettings, role: AIModelRole) {
-    let assigned = match role {
-        AIModelRole::Design => &settings.assignments.design,
-        AIModelRole::Review => &settings.assignments.review,
-        AIModelRole::Fast => &settings.assignments.fast,
-        AIModelRole::Vision => &settings.assignments.vision,
+                let conn_id = settings
+                    .connections
+                    .iter()
+                    .find(|c| c.provider.id() == prov_id && (c.custom_base_url.is_empty() || c.custom_base_url == editor.quick_url.trim()))
+                    .map(|c| c.id.clone())
+                    .unwrap_or_else(|| {
+                        let new_id = format!("connection-{}", settings.connections.len() + 1);
+                        let mut params = serde_json::json!({
+                            "provider": prov_id,
+                        });
+                        if !editor.quick_url.trim().is_empty() {
+                            params["customBaseURL"] = serde_json::json!(editor.quick_url.trim());
+                        }
+                        ran.push(("ai.connection.add".into(), params));
+                        new_id
+                    });
+
+                let model_name = if editor.quick_name.trim().is_empty() { "Active Model".to_string() } else { editor.quick_name.trim().to_string() };
+                let model_id_val = if editor.quick_model.trim().is_empty() {
+                    "nemotron-3.5-lightning-free".to_string()
+                } else {
+                    editor.quick_model.trim().to_string()
+                };
+
+                ran.push((
+                    "ai.model.add".into(),
+                    serde_json::json!({
+                        "name": model_name,
+                        "connectionId": conn_id.clone(),
+                        "modelID": model_id_val,
+                        "capabilities": ["tools", "vision"],
+                        "setAsActive": true,
+                    }),
+                ));
+
+                if !editor.quick_key.trim().is_empty() {
+                    let key_val = editor.quick_key.trim().to_string();
+                    ran.push((
+                        "ai.credential.set".into(),
+                        serde_json::json!({
+                            "integration": prov_id,
+                            "profileId": conn_id,
+                            "field": "api-key",
+                            "value": key_val,
+                        }),
+                    ));
+                }
+
+                app.toast("Model configured and activated successfully!");
+            }
+        });
+
+    ui.add_space(14.0);
+    ui.separator();
+    ui.add_space(10.0);
+
+    // 2. Configured Models Section
+    section_header(ui, "Configured Models", t);
+    let active_id = settings.assignments.design.clone();
+
+    if settings.models.is_empty() {
+        egui::Frame::NONE.fill(t.field).corner_radius(egui::CornerRadius::same(6)).inner_margin(egui::Margin::symmetric(12, 10)).show(ui, |ui| {
+            ui.label(
+                egui::RichText::new("No models configured yet. Use Quick Model Setup above to add your model.")
+                    .font(regular(11.5))
+                    .color(t.text_secondary),
+            );
+        });
+    } else {
+        for model in &settings.models {
+            let is_active = model.id == active_id;
+            let conn_url = settings
+                .connections
+                .iter()
+                .find(|c| c.id == model.connection_id)
+                .map(|c| {
+                    if c.custom_base_url.is_empty() {
+                        providers::provider(c.provider).map(|p| p.name).unwrap_or(c.provider.id()).to_string()
+                    } else {
+                        c.custom_base_url.clone()
+                    }
+                })
+                .unwrap_or_else(|| model.connection_id.clone());
+
+            egui::Frame::NONE
+                .fill(if is_active { t.selected_row } else { t.field })
+                .corner_radius(egui::CornerRadius::same(6))
+                .inner_margin(egui::Margin::symmetric(10, 8))
+                .stroke(egui::Stroke::new(1.0, if is_active { t.accent_on } else { t.border }))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        // Left: Name & info
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new(&model.name).font(crate::theme::semibold(12.0)).color(t.text));
+                                if is_active {
+                                    ui.add_space(6.0);
+                                    let badge_r = ui.allocate_response(vec2(48.0, 18.0), Sense::hover());
+                                    ui.painter().rect_filled(badge_r.rect, CornerRadius::same(9), t.accent_on);
+                                    ui.painter().text(badge_r.rect.center(), Align2::CENTER_CENTER, "Active", regular(10.0), t.accent_text);
+                                }
+                            });
+                            ui.add_space(2.0);
+                            ui.label(
+                                egui::RichText::new(format!("ID: {}  •  {}", model.model_id, conn_url)).font(regular(10.5)).color(t.text_secondary),
+                            );
+                        });
+
+                        // Right: Actions (Set Active, Delete)
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if widgets::button(ui, tr("Delete"), false, false).clicked() {
+                                ran.push(("ai.model.remove".into(), serde_json::json!({"id": model.id})));
+                            }
+                            if !is_active && widgets::button(ui, "Set as Active", false, true).clicked() {
+                                ran.push(("ai.role.assign".into(), serde_json::json!({"role": "all", "modelId": model.id})));
+                            }
+                        });
+                    });
+                });
+            ui.add_space(6.0);
+        }
     }
-    .clone();
-    let label = match role {
-        AIModelRole::Design => tr("Design agent"),
-        AIModelRole::Review => tr("Review"),
-        AIModelRole::Fast => tr("Fast tasks"),
-        AIModelRole::Vision => tr("Vision"),
-    };
-    ui.horizontal(|ui| {
-        ui.label(label);
-        let mut options: Vec<String> = settings.models.iter().map(|m| m.name.clone()).collect();
-        if options.is_empty() {
-            widgets::label(ui, tr("No models yet"), t.text_tertiary);
-            return;
-        }
-        let none = tr("None").to_string();
-        options.insert(0, none.clone());
-        let shown = settings.models.iter().find(|m| m.id == assigned).map(|m| m.name.clone()).unwrap_or(none);
-        if widgets::combo_field(ui, egui::Id::unique(("ai_role", role.id())), &shown, 150.0, &options)
-            .and_then(|name| settings.models.iter().find(|m| m.name == name).map(|m| m.id.clone()))
-            .map(|id| ran.push(("ai.role.assign".into(), serde_json::json!({"role": role.id(), "modelId": id}))))
-            .is_some()
-        {
-            return;
-        }
-        if widgets::button(ui, tr("Clear"), false, !assigned.is_empty()).clicked() {
-            ran.push(("ai.role.assign".into(), serde_json::json!({"role": role.id(), "modelId": ""})));
-        }
-    });
 }
 
 // ---------- Media ----------
@@ -1190,52 +1256,146 @@ fn skills_tab(app: &mut FigApp, ui: &mut Ui, editor: &mut Editor, ran: &mut Vec<
 
     // A new one, written here.
     ui.add_space(8.0);
-    let Some(mut draft) = editor.skill_draft.take() else {
-        if widgets::button(ui, tr("Add an instruction"), false, true).clicked() {
-            editor.skill_draft = Some(SkillDraft::default());
-        }
-        return edited;
-    };
-    ui.add_space(4.0);
-    let mut cancelled = false;
-    let mut saved = false;
-    ui.horizontal(|ui| {
-        ui.label(tr("Name"));
-        if widgets::text_field(ui, egui::Id::unique("ai_skill_name"), &draft.name, 140.0, tr("Name")).map(|v| draft.name = v).is_some() {
+    if let Some(mut draft) = editor.skill_draft.take() {
+        ui.add_space(4.0);
+        let mut cancelled = false;
+        let mut saved = false;
+        ui.horizontal(|ui| {
+            ui.label(tr("Name"));
+            if widgets::text_field(ui, egui::Id::unique("ai_skill_name"), &draft.name, 140.0, tr("Name")).map(|v| draft.name = v).is_some() {
+                edited = true;
+            }
+            ui.label(tr("Description"));
+            if widgets::text_field(ui, egui::Id::unique("ai_skill_desc"), &draft.description, 140.0, tr("Description"))
+                .map(|v| draft.description = v)
+                .is_some()
+            {
+                edited = true;
+            }
+        });
+        ui.add_space(4.0);
+        let mut prompt = draft.prompt.clone();
+        ui.add_sized([ui.available_width(), 120.0], TextEdit::multiline(&mut prompt).hint_text(tr("What the model should do every request…")));
+        if prompt != draft.prompt {
+            draft.prompt = prompt;
             edited = true;
-            return;
         }
-        ui.label(tr("Description"));
-        if widgets::text_field(ui, egui::Id::unique("ai_skill_desc"), &draft.description, 140.0, tr("Description"))
-            .map(|v| draft.description = v)
-            .is_some()
-        {
-            edited = true;
+        ui.horizontal(|ui| {
+            let ready = !draft.name.trim().is_empty() && !draft.prompt.trim().is_empty();
+            if widgets::button(ui, tr("Save"), false, ready).clicked() {
+                ran.push((
+                    "ai.skill.add".into(),
+                    serde_json::json!({"name": draft.name.trim(), "description": draft.description.trim(), "promptContent": draft.prompt.trim()}),
+                ));
+                saved = true;
+                edited = true;
+            }
+            if widgets::button(ui, tr("Cancel"), false, true).clicked() {
+                cancelled = true;
+            }
+        });
+        if !saved && !cancelled {
+            editor.skill_draft = Some(draft);
         }
-    });
-    ui.add_space(4.0);
-    let mut prompt = draft.prompt.clone();
-    ui.add_sized([ui.available_width(), 120.0], TextEdit::multiline(&mut prompt).hint_text(tr("What the model should do every request…")));
-    if prompt != draft.prompt {
-        draft.prompt = prompt;
-        edited = true;
+    } else if widgets::button(ui, tr("Add an instruction"), false, true).clicked() {
+        editor.skill_draft = Some(SkillDraft::default());
     }
+
+    // Install from GitHub section
+    ui.add_space(10.0);
+    section_header(ui, "Install Skill from GitHub", t);
+    widgets::label(ui, "Enter a GitHub repository or SKILL.md URL to install as a standing instruction:", t.text_secondary);
+    ui.add_space(4.0);
+
+    let busy = editor.skill_install_job.is_some();
     ui.horizontal(|ui| {
-        let ready = !draft.name.trim().is_empty() && !draft.prompt.trim().is_empty();
-        if widgets::button(ui, tr("Save"), false, ready).clicked() {
-            ran.push((
-                "ai.skill.add".into(),
-                serde_json::json!({"name": draft.name.trim(), "description": draft.description.trim(), "promptContent": draft.prompt.trim()}),
-            ));
-            saved = true;
-            edited = true;
-        }
-        if widgets::button(ui, tr("Cancel"), false, true).clicked() {
-            cancelled = true;
+        let mut typed = editor.github_skill_url.clone();
+        widgets::text_input(
+            ui,
+            egui::Id::unique("ai_github_skill_url"),
+            &mut typed,
+            320.0,
+            "https://github.com/owner/repo",
+        );
+        editor.github_skill_url = typed;
+
+        let ready = !editor.github_skill_url.trim().is_empty() && !busy;
+        if widgets::button(ui, if busy { "Installing…" } else { "Install Skill" }, false, ready).clicked() {
+            let url = editor.github_skill_url.trim().to_string();
+            let candidates = figcraft_ai::skills::prompt::github_skill_candidate_urls(&url);
+            if candidates.is_empty() {
+                editor.skill_install_status = Some(("error".into(), "Please enter a valid GitHub URL.".to_string()));
+            } else {
+                let fut = app.services.fetch_url(&candidates[0]);
+                editor.skill_install_job = Some(SkillInstallJob {
+                    candidates,
+                    current: 0,
+                    future: fut,
+                    original_url: url,
+                });
+                editor.skill_install_status = Some(("info".into(), "Fetching skill from GitHub…".to_string()));
+            }
         }
     });
-    if !saved && !cancelled {
-        editor.skill_draft = Some(draft);
+
+    // Poll active skill installation job
+    if let Some(job) = &mut editor.skill_install_job {
+        let waker = std::task::Waker::from(std::sync::Arc::new(crate::services::RepaintWaker(ui.ctx().clone())));
+        let mut cx = std::task::Context::from_waker(&waker);
+        let mut finished = None;
+        if let Some(fut) = &mut job.future {
+            if let std::task::Poll::Ready(res) = fut.as_mut().poll(&mut cx) {
+                match res {
+                    Ok(markdown) => {
+                        finished = Some(Ok((job.original_url.clone(), markdown)));
+                    }
+                    Err(_) => {
+                        job.current += 1;
+                        if job.current < job.candidates.len() {
+                            job.future = app.services.fetch_url(&job.candidates[job.current]);
+                        } else {
+                            finished = Some(Err("Could not find SKILL.md or README.md at this repository.".to_string()));
+                        }
+                    }
+                }
+            }
+        } else {
+            finished = Some(Err("Network fetch is not available in this environment.".to_string()));
+        }
+
+        if let Some(res) = finished {
+            editor.skill_install_job = None;
+            match res {
+                Ok((url, markdown)) => {
+                    let (name, _, _) = figcraft_ai::skills::prompt::parse_skill_markdown(&markdown, "custom-skill");
+                    ran.push((
+                        "ai.skill.installMarkdown".into(),
+                        serde_json::json!({
+                            "name": name,
+                            "markdown": markdown,
+                            "url": url,
+                        }),
+                    ));
+                    app.toast(format!("Installed skill \"{name}\" from GitHub!"));
+                    editor.github_skill_url.clear();
+                    editor.skill_install_status = Some(("ok".into(), format!("Installed \"{name}\" successfully!")));
+                    edited = true;
+                }
+                Err(err) => {
+                    editor.skill_install_status = Some(("error".into(), err));
+                }
+            }
+        }
+    }
+
+    if let Some((kind, msg)) = &editor.skill_install_status {
+        let colour = match kind.as_str() {
+            "error" => t.danger,
+            "ok" => t.success,
+            _ => t.accent,
+        };
+        ui.add_space(2.0);
+        widgets::label(ui, msg, colour);
     }
 
     ui.add_space(10.0);

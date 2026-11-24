@@ -59,27 +59,35 @@ pub struct ChatMessage {
     /// The tool call this message made, for an assistant message.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCall>,
+    /// Base64 or data URL images attached to this message (vision).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
 }
 
 impl ChatMessage {
     /// A message from the person.
     pub fn user(content: impl Into<String>) -> Self {
-        Self { role: Role::User, content: content.into(), tool_call_id: None, tool_calls: Vec::new() }
+        Self { role: Role::User, content: content.into(), tool_call_id: None, tool_calls: Vec::new(), images: Vec::new() }
+    }
+
+    /// A message from the person with attached images for vision.
+    pub fn user_with_images(content: impl Into<String>, images: Vec<String>) -> Self {
+        Self { role: Role::User, content: content.into(), tool_call_id: None, tool_calls: Vec::new(), images }
     }
 
     /// A message from the model.
     pub fn assistant(content: impl Into<String>) -> Self {
-        Self { role: Role::Assistant, content: content.into(), tool_call_id: None, tool_calls: Vec::new() }
+        Self { role: Role::Assistant, content: content.into(), tool_call_id: None, tool_calls: Vec::new(), images: Vec::new() }
     }
 
     /// A message from the model that calls tools.
     pub fn assistant_calls(content: impl Into<String>, tool_calls: Vec<ToolCall>) -> Self {
-        Self { role: Role::Assistant, content: content.into(), tool_call_id: None, tool_calls }
+        Self { role: Role::Assistant, content: content.into(), tool_call_id: None, tool_calls, images: Vec::new() }
     }
 
     /// A tool's answer.
     pub fn tool_result(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
-        Self { role: Role::Tool, content: content.into(), tool_call_id: Some(tool_call_id.into()), tool_calls: Vec::new() }
+        Self { role: Role::Tool, content: content.into(), tool_call_id: Some(tool_call_id.into()), tool_calls: Vec::new(), images: Vec::new() }
     }
 }
 
@@ -281,6 +289,9 @@ mod tests {
         let t = ChatMessage::tool_result("c1", "done");
         assert_eq!(t.role, Role::Tool);
         assert_eq!(t.tool_call_id.as_deref(), Some("c1"));
+        let with_img = ChatMessage::user_with_images("look", vec!["data:image/png;base64,abc".into()]);
+        assert_eq!(with_img.images.len(), 1);
+        assert_eq!(with_img.images[0], "data:image/png;base64,abc");
     }
 
     #[test]

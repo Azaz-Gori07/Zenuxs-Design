@@ -57,6 +57,15 @@ fn tool_json(tool: &Tool) -> Value {
     json!({"name": tool.name, "description": tool.description, "input_schema": tool.input_schema})
 }
 
+fn parse_data_url(data_url: &str) -> (&str, &str) {
+    if let Some(rest) = data_url.strip_prefix("data:")
+        && let Some((header, data)) = rest.split_once(";base64,")
+    {
+        return (header, data);
+    }
+    ("image/png", data_url)
+}
+
 /// The system text and the conversation, in the protocol's own shapes.
 ///
 /// The system text is its own field here, not a message.
@@ -65,6 +74,24 @@ fn system_and_messages(messages: &[ChatMessage]) -> (Vec<Value>, Vec<Value>) {
     let mut out = Vec::new();
     for message in messages {
         match message.role {
+            Role::User if !message.images.is_empty() => {
+                let mut content = Vec::new();
+                if !message.content.is_empty() {
+                    content.push(json!({"type": "text", "text": message.content}));
+                }
+                for img in &message.images {
+                    let (media_type, data) = parse_data_url(img);
+                    content.push(json!({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": data,
+                        }
+                    }));
+                }
+                out.push(json!({"role": "user", "content": content}));
+            }
             Role::User => out.push(json!({"role": "user", "content": [{"type": "text", "text": message.content}]})),
             Role::Assistant if message.tool_calls.is_empty() => {
                 out.push(json!({"role": "assistant", "content": [{"type": "text", "text": message.content}]}))
@@ -214,6 +241,23 @@ mod tests {
         assert_eq!(budget_for("high", 4096), 3277);
         // Never above the limit itself.
         assert!(budget_for("xhigh", 1024) <= 1024);
+    }
+
+    #[test]
+    fn a_user_message_with_images_formats_as_multimodal() {
+        let mut r = request();
+        r.messages = vec![ChatMessage::user_with_images(
+            "Check this design",
+            vec!["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==".into()],
+        )];
+        let body = request_body(&r);
+        let content = &body["messages"][0]["content"];
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[0]["text"], "Check this design");
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["source"]["type"], "base64");
+        assert_eq!(content[1]["source"]["media_type"], "image/png");
+        assert_eq!(content[1]["source"]["data"], "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
     }
 
     #[test]

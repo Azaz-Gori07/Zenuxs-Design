@@ -12,12 +12,13 @@ use crate::icons::{self, Icon};
 use crate::theme::{Tokens, regular};
 use crate::toolbar::pretty_shortcut;
 
-mod clipboard;
+pub(crate) mod clipboard;
 mod palette;
 mod select_layer;
 mod tree;
 
 pub use clipboard::paste;
+pub(crate) use clipboard::clipboard_png;
 use clipboard::{figcraft_svg_export, text_layers_text};
 use palette::palette;
 #[cfg(test)]
@@ -45,6 +46,7 @@ pub const UI_COMMANDS: &[&str] = &[
     "edit.copyAsSvg",
     "edit.copyAsPng",
     "edit.copyLink",
+    "ai.chat.askSelection",
 ];
 
 /// Dev Mode (the Inspect tab) refuses command `id` from the menus, shortcuts, clipboard, the
@@ -183,6 +185,23 @@ pub fn invoke(app: &mut FigApp, id: &str) {
             app.ui.left_tab = crate::LeftTab::File;
             app.ui.open_left_panel();
             app.ui.pages_open = true;
+        }
+        "ai.chat.askSelection" => {
+            app.ui.right_tab = crate::RightTab::Chat;
+            app.ui.chat.with_selection = true;
+            app.ui.chat.focus_draft = true;
+            if let Ok(ds) = app.session.ds()
+                && let Some(first_id) = ds.selection.first()
+            {
+                app.ui.chat.last_selected_id = Some(first_id.0);
+                if let Some(node) = ds.doc.node(*first_id) {
+                    let tag = format!("@{} ", node.name);
+                    if !app.ui.chat.draft.starts_with(&tag) {
+                        app.ui.chat.draft = format!("{tag}{}", app.ui.chat.draft);
+                    }
+                }
+            }
+            app.toast("Element mentioned in AI chat");
         }
         // From a menu the link is pasted into the Join dialog (`collab.join {link}` joins directly).
         "collab.join" => crate::live::open_join(app, ""),
@@ -501,12 +520,19 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                     matches!(app.session.selection().as_slice(), [id] if doc.node(*id).and_then(figcraft_engine::cmd::image::top_image_fill).is_some())
                 });
                 let copy_link = i18n::command("edit.copyLink", "Copy link to selection");
+                let place_img = i18n::command("file.placeImage", "Place image…");
+                let import_cmd = i18n::command("file.import", "Import…");
                 let mut entries: Vec<(&str, &str)> = if has_sel {
                     vec![
+                        ("✨ Ask AI / Share with AI…", "ai.chat.askSelection"),
+                        ("-", ""),
                         (tr("Copy"), "edit.copy"),
                         (tr("Paste here"), "edit.paste"),
                         (tr("Paste to replace"), "edit.pasteReplace"),
                         (tr("Copy as"), COPY_AS),
+                        ("-", ""),
+                        (&place_img, "file.placeImage"),
+                        (&import_cmd, "file.import"),
                         ("-", ""),
                         (tr("Bring to front"), "arrange.front"),
                         (tr("Bring forward"), "arrange.forward"),
@@ -537,6 +563,9 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                 } else {
                     vec![
                         (tr("Paste here"), "edit.paste"),
+                        ("-", ""),
+                        (&place_img, "file.placeImage"),
+                        (&import_cmd, "file.import"),
                         ("-", ""),
                         (tr("Select all"), "select.all"),
                         ("-", ""),

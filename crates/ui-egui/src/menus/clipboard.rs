@@ -130,13 +130,19 @@ fn paste_text(app: &mut FigApp, text: &str, (cx, cy): (f64, f64), center: bool) 
         use base64::Engine as _;
         let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
         app.run_user("file.import", json!({"data": b64, "name": "Pasted SVG.svg", "x": cx, "y": cy, "center": center}));
+    } else if (text.trim().starts_with('{') && text.trim().ends_with('}')) || (text.trim().starts_with('[') && text.trim().ends_with(']')) {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+        if app.run_user("file.import", json!({"data": b64, "name": "Pasted design.json", "x": cx, "y": cy, "center": center})).is_none() {
+            app.run("text.create", json!({"text": text, "x": cx, "y": cy}));
+        }
     } else {
         app.run("text.create", json!({"text": text, "x": cx, "y": cy}));
     }
 }
 
 /// The system clipboard's image as PNG bytes, with its size.
-fn clipboard_png(app: &mut FigApp) -> Option<(Vec<u8>, f64, f64)> {
+pub(crate) fn clipboard_png(app: &mut FigApp) -> Option<(Vec<u8>, f64, f64)> {
     let clipboard_png = app.services.clipboard_get_png().filter(|png| png.len() <= crate::MAX_CLIPBOARD_PNG_BYTES);
     let (png, (w, h)) = match clipboard_png.and_then(with_pixel_size) {
         Some(readable) => readable,

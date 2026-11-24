@@ -91,6 +91,10 @@ pub trait Services {
     /// Ask for them (the browser asks the person): they join the font list by name, each read when
     /// text uses it.
     fn ask_for_local_fonts(&mut self) {}
+    /// Fetch text from a remote URL (e.g. installing a skill from GitHub).
+    fn fetch_url(&mut self, _url: &str) -> Option<TextFetchFuture> {
+        None
+    }
 }
 
 pub type DialogFuture = Pin<Box<dyn Future<Output = Option<PathBuf>>>>;
@@ -98,6 +102,9 @@ pub type DialogFuture = Pin<Box<dyn Future<Output = Option<PathBuf>>>>;
 /// A picked file's name and contents ([`Services::pick_open_contents`]); `None` when the picker
 /// was cancelled, `Err` with what to tell the user when the file couldn't be read.
 pub type ContentsFuture = Pin<Box<dyn Future<Output = Option<Result<(String, Vec<u8>), String>>>>>;
+
+/// A remote URL's text contents (`Err`: why it couldn't be fetched).
+pub type TextFetchFuture = Pin<Box<dyn Future<Output = Result<String, String>>>>;
 
 /// A dropped file's contents, read once they arrive (`Err`: what to tell the user when they
 /// couldn't be read).

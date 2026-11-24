@@ -31,7 +31,10 @@ pub use library::{is_valid_library_id, read_library, read_library_within};
 mod density;
 
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::{Read, Seek, SeekFrom, Write};
+#[cfg(target_arch = "wasm32")]
+use std::io::{Read, Write};
 use std::sync::Arc;
 
 use figcraft_doc::{Document, ImageData};

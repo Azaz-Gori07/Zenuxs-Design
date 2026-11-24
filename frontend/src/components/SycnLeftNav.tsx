@@ -4,15 +4,17 @@
  */
 
 import React, { useState } from 'react';
-import { Home, Layers, Component, Sliders, Shapes } from 'lucide-react';
+import { Home, Layers, Component, Sliders, Shapes, ShoppingBag } from 'lucide-react';
 import { IconsPanel } from './IconsPanel';
+import { MarketPanel } from './MarketPanel';
 
-export type LeftNavTab = 'home' | 'file' | 'assets' | 'variables' | 'icons';
+export type LeftNavTab = 'home' | 'file' | 'assets' | 'variables' | 'icons' | 'market';
 
 export interface SycnLeftNavProps {
   initialTab?: LeftNavTab;
   onTabChange?: (tab: LeftNavTab) => void;
   onIconInserted?: (nodeId: string, iconId: string) => void;
+  onComponentInserted?: (nodeId: string, componentId: string) => void;
   className?: string;
 }
 
@@ -20,6 +22,7 @@ export const SycnLeftNav: React.FC<SycnLeftNavProps> = ({
   initialTab = 'file',
   onTabChange,
   onIconInserted,
+  onComponentInserted,
   className = '',
 }) => {
   const [activeTab, setActiveTab] = useState<LeftNavTab>(initialTab);
@@ -43,6 +46,8 @@ export const SycnLeftNav: React.FC<SycnLeftNavProps> = ({
     { id: 'variables' as LeftNavTab, label: 'Variables', icon: Sliders },
     // "Icons" tab placed exactly below "Variables" using Shapes icon
     { id: 'icons' as LeftNavTab, label: 'Icons', icon: Shapes },
+    // In-app Component Marketplace Tab (Shadcn Ecosystem)
+    { id: 'market' as LeftNavTab, label: 'Market', icon: ShoppingBag },
   ];
 
   return (
@@ -94,6 +99,14 @@ export const SycnLeftNav: React.FC<SycnLeftNavProps> = ({
       {/* 2. Secondary Adjacent Panel */}
       {isPanelOpen && (
         <div className="h-full flex-shrink-0 animate-in slide-in-from-left-2 duration-150">
+          {activeTab === 'market' && (
+            <MarketPanel
+              isOpen={isPanelOpen}
+              onClose={() => setIsPanelOpen(false)}
+              onComponentInserted={onComponentInserted}
+            />
+          )}
+
           {activeTab === 'icons' && (
             <IconsPanel
               isOpen={isPanelOpen}

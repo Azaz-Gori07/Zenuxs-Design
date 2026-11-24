@@ -161,7 +161,7 @@ export async function insertIconToCanvas(
       },
     };
 
-    // If native sycnUI / figcraft engine API is exposed on window
+    // If native sycnUI engine API is exposed on window
     if (win.__sycnui_engine?.execute) {
       try {
         const res = await win.__sycnui_engine.execute(commandPayload.command, commandPayload.params);
@@ -169,12 +169,13 @@ export async function insertIconToCanvas(
       } catch (e) {
         console.warn('[insertIconToCanvas] Engine execute call error:', e);
       }
-    } else if (win.figcraft_execute) {
+    } else if (win.figcraft_execute || (win as any).sycnui_execute) {
       try {
-        const res = win.figcraft_execute(commandPayload.command, JSON.stringify(commandPayload.params));
+        const executor = (win as any).sycnui_execute || win.figcraft_execute;
+        const res = executor(commandPayload.command, JSON.stringify(commandPayload.params));
         if (res?.id) finalNodeId = String(res.id);
       } catch (e) {
-        console.warn('[insertIconToCanvas] figcraft_execute call error:', e);
+        console.warn('[insertIconToCanvas] execute call error:', e);
       }
     }
 

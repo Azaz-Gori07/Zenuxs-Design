@@ -47,7 +47,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "ai.model.add",
             "Add AI model",
-            "{name, connectionId, modelID, customModelID?, maxOutputTokens?, capabilities?: [tools|vision]} → {id}",
+            "{name, connectionId, modelID, customModelID?, maxOutputTokens?, capabilities?: [tools|vision], setAsActive?: bool} → {id}",
             false,
             model_add
         ),
@@ -70,7 +70,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "ai.role.assign",
             "Assign a model to a role",
-            "{role: design|review|fast|vision, modelId} (an empty modelId clears the role)",
+            "{role: design|review|fast|vision|all, modelId} (an empty modelId clears the role)",
             false,
             role_assign
         ),
@@ -100,15 +100,40 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("ai.skill.add", "Add a standing instruction", "{name, promptContent, description?, tags?} → {id}", false, skill_add),
         spec!("ai.skill.remove", "Remove a standing instruction", "{id}", false, skill_remove),
         spec!(
+            "ai.skill.installMarkdown",
+            "Install a skill from markdown text",
+            "{markdown, url?, name?} → {id, name, description}",
+            false,
+            skill_install_markdown
+        ),
+        spec!(
             "ai.chat.send",
             "Send an AI chat message",
-            "{text, role?: user (default)}  the interface sends the last queued message on its worker thread; `ai.chat.status` says when it is out",
+            "{text?, message?: user (default)}  the interface sends the last queued message on its worker thread; `ai.chat.status` says when it is out",
             false,
             |s, p| {
-                let cmd = "ai.chat.send";
-                let text = req_string(cmd, p, "text")?;
-                s.chat_append(crate::chat::message_of(cmd, &json!({"role": "user", "content": text}))?)?;
+                let text = string(p, "text").or_else(|| string(p, "message")).unwrap_or_default();
+                let images = p.get("images").and_then(Value::as_array);
+                if text.is_empty() && !images.is_some_and(|a| !a.is_empty()) {
+                    return Err(bad("ai.chat.send", "requires `text`, `message`, or `images`"));
+                }
+                let mut msg = json!({"role": "user", "content": text});
+                if let Some(imgs) = images {
+                    msg["images"] = json!(imgs);
+                }
+                s.chat_append(crate::chat::message_of("ai.chat.send", &msg)?)?;
                 s.chat.pending_send = true;
+                s.request_ui("panel.ai", json!({}));
+                ok()
+            }
+        ),
+        spec!(
+            "ai.chat.askSelection",
+            "Ask AI about selection",
+            "{} → opens AI chat with current selection mentioned",
+            false,
+            |s, _| {
+                s.chat.pending_send = false;
                 s.request_ui("panel.ai", json!({}));
                 ok()
             }
@@ -583,13 +608,21 @@ fn model_add(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "ai.model.add";
     let name = req_string(cmd, p, "name")?;
     let connection_id = req_string(cmd, p, "connectionId")?;
-    let model_id = string(p, "modelID").unwrap_or_default();
+    let mut model_id = string(p, "modelID").unwrap_or_default();
     let custom_model_id = string(p, "customModelID").unwrap_or_default();
-    if model_id.trim().is_empty() && custom_model_id.trim().is_empty() {
-        return Err(bad(cmd, "a model needs a modelID"));
-    }
     if !s.prefs.ai.models.connections.iter().any(|c| c.id == connection_id) {
         return Err(bad(cmd, format!("there is no connection \"{connection_id}\"")));
+    }
+    if model_id.trim().is_empty() && custom_model_id.trim().is_empty() {
+        if let Some(conn) = s.prefs.ai.models.connections.iter().find(|c| c.id == connection_id)
+            && let Some(def) = providers::provider(conn.provider)
+            && let Some(first_model) = def.models.first()
+        {
+            model_id = first_model.id.to_string();
+        }
+        if model_id.trim().is_empty() {
+            model_id = "nemotron-3.5-lightning-free".to_string();
+        }
     }
     if s.prefs.ai.models.models.len() >= MAX_MODELS {
         return Err(bad(cmd, format!("there are already {MAX_MODELS} models")));
@@ -606,6 +639,15 @@ fn model_add(s: &mut Session, p: &Value) -> Result<Value> {
         reasoning_effort: None,
         capabilities: capabilities(cmd, p, "capabilities")?,
     });
+    let set_as_active = p.get("setAsActive").and_then(Value::as_bool).unwrap_or(false)
+        || p.get("assignRoles").and_then(Value::as_bool).unwrap_or(false)
+        || s.prefs.ai.models.assignments.design.is_empty();
+    if set_as_active {
+        s.prefs.ai.models.assignments.design = id.clone();
+        s.prefs.ai.models.assignments.review = id.clone();
+        s.prefs.ai.models.assignments.fast = id.clone();
+        s.prefs.ai.models.assignments.vision = id.clone();
+    }
     s.prefs_unsaved = true;
     Ok(json!({"id": id}))
 }
@@ -654,6 +696,13 @@ fn model_remove(s: &mut Session, p: &Value) -> Result<Value> {
             role.clear();
         }
     }
+    if assignments.design.is_empty() && !s.prefs.ai.models.models.is_empty() {
+        let first_id = s.prefs.ai.models.models[0].id.clone();
+        assignments.design = first_id.clone();
+        assignments.review = first_id.clone();
+        assignments.fast = first_id.clone();
+        assignments.vision = first_id;
+    }
     s.prefs_unsaved = true;
     Ok(json!({"removed": id}))
 }
@@ -668,9 +717,13 @@ fn connection_add(s: &mut Session, p: &Value) -> Result<Value> {
     if s.prefs.ai.models.connections.len() >= MAX_CONNECTIONS {
         return Err(bad(cmd, format!("there are already {MAX_CONNECTIONS} connections")));
     }
-    let custom_base_url = string(p, "customBaseURL").unwrap_or_default();
+    let mut custom_base_url = string(p, "customBaseURL").unwrap_or_default();
     if provider.supports_custom_base_url() && custom_base_url.trim().is_empty() {
-        return Err(bad(cmd, "this provider needs a base URL"));
+        if provider_id == "opencode-free-bridge" {
+            custom_base_url = "http://127.0.0.1:20129/v1".to_string();
+        } else {
+            return Err(bad(cmd, "this provider needs a base URL"));
+        }
     }
     let api_type = match string(p, "customAPIType").as_deref() {
         None | Some("completions") => APIType::Completions,
@@ -714,13 +767,21 @@ fn connection_remove(s: &mut Session, p: &Value) -> Result<Value> {
 fn role_assign(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "ai.role.assign";
     let role_id = req_string(cmd, p, "role")?;
-    let Some(role) = AIModelRole::from_id(&role_id) else {
-        return Err(bad(cmd, format!("there is no role \"{role_id}\"")));
-    };
-    let model_id = string(p, "modelId").unwrap_or_default();
+    let model_id = string(p, "modelId").or_else(|| string(p, "model")).unwrap_or_default();
     if !model_id.is_empty() && !s.prefs.ai.models.models.iter().any(|m| m.id == model_id) {
         return Err(bad(cmd, format!("there is no model \"{model_id}\"")));
     }
+    if role_id == "all" {
+        s.prefs.ai.models.assignments.design = model_id.clone();
+        s.prefs.ai.models.assignments.review = model_id.clone();
+        s.prefs.ai.models.assignments.fast = model_id.clone();
+        s.prefs.ai.models.assignments.vision = model_id.clone();
+        s.prefs_unsaved = true;
+        return Ok(json!({"role": "all", "modelId": model_id}));
+    }
+    let Some(role) = AIModelRole::from_id(&role_id) else {
+        return Err(bad(cmd, format!("there is no role \"{role_id}\"")));
+    };
     match role {
         AIModelRole::Design => s.prefs.ai.models.assignments.design = model_id.clone(),
         AIModelRole::Review => s.prefs.ai.models.assignments.review = model_id.clone(),
@@ -852,6 +913,39 @@ fn skill_remove(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.prefs_unsaved = true;
     Ok(json!({"removed": id}))
+}
+
+/// Install a skill from markdown text (e.g. SKILL.md from GitHub or clipboard).
+fn skill_install_markdown(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "ai.skill.installMarkdown";
+    let markdown = req_string(cmd, p, "markdown")?;
+    let fallback = string(p, "name").unwrap_or_else(|| "custom-skill".into());
+    let url = string(p, "url").unwrap_or_default();
+    let (name, desc, prompt) = figcraft_ai::skills::prompt::parse_skill_markdown(&markdown, &fallback);
+
+    if s.prefs.ai.skills.all().len() >= MAX_PROMPT_SKILLS {
+        return Err(bad(cmd, format!("there are already {MAX_PROMPT_SKILLS} standing instructions")));
+    }
+
+    let skill = s.prefs.ai.skills.add(PromptSkill {
+        id: String::new(),
+        name: name.clone(),
+        display_name: name.clone(),
+        description: desc.clone(),
+        version: String::new(),
+        author: String::new(),
+        source_url: url,
+        tags: vec![],
+        is_default: false,
+        enabled: true,
+        prompt_content: prompt,
+    });
+    s.prefs_unsaved = true;
+    Ok(json!({
+        "id": skill.id,
+        "name": skill.name,
+        "description": skill.description,
+    }))
 }
 
 /// What the models have been used for.

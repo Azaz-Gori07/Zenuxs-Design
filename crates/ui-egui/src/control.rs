@@ -1157,7 +1157,28 @@ fn ui_set_view(app: &mut FigApp, ctx: &Context, p: &Value) -> Result<(), String>
         };
     }
     if let Some(t) = p.get("leftTab").and_then(Value::as_str) {
-        app.ui.left_tab = if t == "assets" { crate::LeftTab::Assets } else { crate::LeftTab::File };
+        app.ui.left_tab = match t.to_lowercase().as_str() {
+            "assets" => crate::LeftTab::Assets,
+            "icons" => crate::LeftTab::Icons,
+            "market" => crate::LeftTab::Market,
+            _ => crate::LeftTab::File,
+        };
+        app.ui.open_left_panel();
+    }
+    if let Some(q) = p.get("iconsQuery").and_then(Value::as_str) {
+        app.ui.icons_query = q.to_string();
+    }
+    if let Some(col) = p.get("iconsCollection").and_then(Value::as_str) {
+        app.ui.icons_collection = col.to_string();
+    }
+    if let Some(q) = p.get("marketQuery").and_then(Value::as_str) {
+        app.ui.market_query = q.to_string();
+    }
+    if let Some(cat) = p.get("marketCategory").and_then(Value::as_str) {
+        app.ui.market_category = cat.to_string();
+    }
+    if let Some(reg) = p.get("marketRegistry").and_then(Value::as_str) {
+        app.ui.market_registry = reg.to_string();
     }
     if let Some(t) = p.get("theme").and_then(Value::as_str) {
         app.session.prefs.theme = t.to_string();
@@ -1192,6 +1213,24 @@ fn ui_set_view(app: &mut FigApp, ctx: &Context, p: &Value) -> Result<(), String>
             crate::menus::open_main_menu(ctx, top);
         }
         _ => {}
+    }
+    if let Some(open) = p.get("aiSettings").and_then(Value::as_bool) {
+        app.ui.ai_settings.open = open;
+        if let Some(tab) = p.get("aiSettingsTab").and_then(Value::as_str) {
+            match tab.to_lowercase().as_str() {
+                "models" => app.ui.ai_settings.tab = crate::dialogs::ai_settings::Tab::Models,
+                "general" => app.ui.ai_settings.tab = crate::dialogs::ai_settings::Tab::General,
+                "skills" => app.ui.ai_settings.tab = crate::dialogs::ai_settings::Tab::Skills,
+                "media" => app.ui.ai_settings.tab = crate::dialogs::ai_settings::Tab::Media,
+                "plugins" => app.ui.ai_settings.tab = crate::dialogs::ai_settings::Tab::Plugins,
+                "storage" => app.ui.ai_settings.tab = crate::dialogs::ai_settings::Tab::Storage,
+                "automation" => app.ui.ai_settings.tab = crate::dialogs::ai_settings::Tab::Automation,
+                "account" => app.ui.ai_settings.tab = crate::dialogs::ai_settings::Tab::Account,
+                "usage" => app.ui.ai_settings.tab = crate::dialogs::ai_settings::Tab::Usage,
+                "diagnostics" => app.ui.ai_settings.tab = crate::dialogs::ai_settings::Tab::Diagnostics,
+                _ => {}
+            }
+        }
     }
     Ok(())
 }
@@ -1480,6 +1519,12 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             // capture generation must see it even though this path bypasses `FigApp::run`.
             app.observe_presentation();
             r
+        }
+        "ai.tool" => {
+            let name = p.get("name").and_then(Value::as_str).ok_or("`name` required")?;
+            let args = p.get("arguments").cloned().unwrap_or(json!({}));
+            let tool = figcraft_engine::chat_tools::table().iter().find(|t| t.name == name).ok_or_else(|| figcraft_engine::chat_tools::instead_of(name))?;
+            tool.run(&mut app.session, &args)
         }
         "engine.commands" => Ok(Value::Array(
             figcraft_engine::all_commands()

@@ -17,9 +17,9 @@ pub const STROKE_SIDES: [&str; 4] = ["strokeTopWeight", "strokeRightWeight", "st
 
 /// Keys `node.set` understands (documented for agents).
 pub const KEYS: &str = "name, visible, locked, opacity (0-1 or \"50%\"), blend, x, y (relative to the parent frame; groups don't count), width, height, rotation (degrees), absoluteRotation (degrees on the page: the layer's angle plus its parents', what the Design panel's field shows; one of the two per call), \
-fills (paints or colours; gradients as {type: linearGradient|radialGradient|angularGradient|diamondGradient, stops: [\"#hex\", ...], from?, to?} too), fill (colour, {$var: variable id or name}, or \"none\"/null: no fill), strokes, stroke (colour, {$var: variable id or name}, or \"none\"/null: no stroke), strokeWeight, strokeAlign (inside|center|outside), strokeSides [t,r,b,l], strokeTopWeight / strokeRightWeight / strokeBottomWeight / strokeLeftWeight (one side; turns on individual strokes), \
-strokeCap / startCap / endCap, strokeJoin, miterAngle (degrees: sharper joins bevel; or miterLimit as a ratio), dashes [..], dashCap (none|round|square; null: dashes take startCap and endCap), widthProfile (preset uniform|wedge|taper|eye|rounded|pinch, [[t, scale], ...] or null), brush (preset id, {preset, spacing, sizeJitter, rotationJitter, scatter, seed} or null), cornerRadius (n or [tl,tr,br,bl]), cornerSmoothing (0-1), effects, \
-clip, isMask, layout (null|horizontal|vertical|grid|{...}), gap, crossGap, padding (n or [t,r,b,l]), paddingTop/Right/Bottom/Left, \
+fills (paints or colours; gradients as {type: linearGradient|radialGradient|angularGradient|diamondGradient, stops: [\"#hex\", ...], from?, to?} too), fill / color / backgroundColor (colour, {$var: variable id or name}, or \"none\"/null: no fill), strokes, stroke / border / borderColor (colour, {$var: variable id or name}, or \"none\"/null: no stroke), strokeWeight / borderWidth, strokeAlign (inside|center|outside), strokeSides [t,r,b,l], strokeTopWeight / strokeRightWeight / strokeBottomWeight / strokeLeftWeight (one side; turns on individual strokes), \
+strokeCap / startCap / endCap, strokeJoin, miterAngle (degrees: sharper joins bevel; or miterLimit as a ratio), dashes [..], dashCap (none|round|square; null: dashes take startCap and endCap), widthProfile (preset uniform|wedge|taper|eye|rounded|pinch, [[t, scale], ...] or null), brush (preset id, {preset, spacing, sizeJitter, rotationJitter, scatter, seed} or null), cornerRadius / radius / borderRadius (n or [tl,tr,br,bl]), cornerSmoothing (0-1), effects, \
+clip, isMask, layout / layoutMode / autoLayout / direction (null|horizontal|vertical|grid|{...}), gap / spacing, crossGap, padding (n or [t,r,b,l]), paddingTop/Right/Bottom/Left, \
 mainAlign (min|center|max, or the auto gaps spaceBetween|spaceAround|spaceEvenly), crossAlign (min|center|max|baseline: first text baselines, horizontal layouts), contentAlign (wrapped lines: auto = packed where crossAlign says | spaceBetween), wrap (rows of a horizontal layout, columns of a vertical one), strokesIncluded (the frame's inside stroke takes up space), reverseZ (canvas stacking: true = first on top), \
 columnGap / rowGap (aliases of gap / crossGap), gridColumns, gridRows, columnTracks / rowTracks ([120 | \"1fr\" | \"auto\" | {sizing, value}]), \
 gridColumn / gridRow (0-based cell anchor, null = auto), gridColumnSpan, gridRowSpan, gridAlignH / gridAlignV (a grid child's alignment in its cell: min|center|max, auto/null = the frame's), sizingH / sizingV (fixed|hug|fill; also layoutSizingHorizontal / layoutSizingVertical), \
@@ -806,7 +806,7 @@ fn apply_look(cmd: &str, doc: &mut Document, id: NodeId, k: &str, v: &Value) -> 
             doc.get_mut(id)?.blend = b;
         }
         "fills" => set_paints(doc.get_mut(id)?, true, paints_of(v).ok_or_else(|| bad(cmd, "`fills` must be paints or colours"))?),
-        "fill" => {
+        "fill" | "color" | "backgroundColor" => {
             if paint_none(v) {
                 set_paints(doc.get_mut(id)?, true, vec![]);
             } else {
@@ -815,7 +815,7 @@ fn apply_look(cmd: &str, doc: &mut Document, id: NodeId, k: &str, v: &Value) -> 
             }
         }
         "strokes" => set_paints(doc.get_mut(id)?, false, paints_of(v).ok_or_else(|| bad(cmd, "`strokes` must be paints or colours"))?),
-        "stroke" => {
+        "stroke" | "border" | "borderColor" => {
             if paint_none(v) {
                 set_paints(doc.get_mut(id)?, false, vec![]);
             } else {
@@ -823,7 +823,9 @@ fn apply_look(cmd: &str, doc: &mut Document, id: NodeId, k: &str, v: &Value) -> 
                 set_paints(doc.get_mut(id)?, false, vec![Paint::solid(c)]);
             }
         }
-        "strokeWeight" => doc.get_mut(id)?.stroke.weight = f64_of(v).ok_or_else(|| bad(cmd, "`strokeWeight` must be a number"))?.max(0.0),
+        "strokeWeight" | "borderWidth" => {
+            doc.get_mut(id)?.stroke.weight = f64_of(v).ok_or_else(|| bad(cmd, "`strokeWeight` must be a number"))?.max(0.0)
+        }
         "strokeAlign" => doc.get_mut(id)?.stroke.align = enum_of(v).ok_or_else(|| bad(cmd, "strokeAlign: inside|center|outside"))?,
         "strokeSides" => {
             doc.get_mut(id)?.stroke.sides = if v.is_null() { None } else { Some(four(v).ok_or_else(|| bad(cmd, "strokeSides: [t,r,b,l]"))?) }
@@ -881,7 +883,7 @@ fn apply_look(cmd: &str, doc: &mut Document, id: NodeId, k: &str, v: &Value) -> 
 /// The `corners` properties of `apply`; `false` when `k` is not one of them.
 fn apply_corners(cmd: &str, doc: &mut Document, id: NodeId, k: &str, v: &Value) -> Result<bool> {
     match k {
-        "cornerRadius" => {
+        "cornerRadius" | "radius" | "borderRadius" => {
             let r = corner_four(v)
                 .ok_or_else(|| bad(cmd, "cornerRadius: n, [tl,tr,br,bl] or {topLeft, topRight, bottomRight, bottomLeft}"))?
                 .map(|x| x.max(0.0));
@@ -933,13 +935,24 @@ fn apply_corners(cmd: &str, doc: &mut Document, id: NodeId, k: &str, v: &Value) 
 /// The `layout` properties of `apply`; `false` when `k` is not one of them.
 fn apply_layout(cmd: &str, doc: &mut Document, id: NodeId, k: &str, v: &Value) -> Result<bool> {
     match k {
-        "layout" | "layoutMode" => {
+        "layout" | "layoutMode" | "autoLayout" | "direction" => {
             let n = doc.get_mut(id)?;
             if !n.kind.is_frame_like() {
-                return Err(bad(cmd, "auto layout needs a frame"));
+                if matches!(n.kind, NodeKind::Rectangle) {
+                    n.kind = NodeKind::Frame;
+                } else {
+                    return Err(bad(cmd, "auto layout needs a frame"));
+                }
             }
             match v {
                 Value::Null => {
+                    n.layout = None;
+                    drop_layout_bindings(n);
+                }
+                Value::Bool(true) => {
+                    ensure_layout(n).mode = LayoutMode::Vertical;
+                }
+                Value::Bool(false) => {
                     n.layout = None;
                     drop_layout_bindings(n);
                 }
@@ -966,7 +979,7 @@ fn apply_layout(cmd: &str, doc: &mut Document, id: NodeId, k: &str, v: &Value) -
                 _ => return Err(bad(cmd, "layout: none|horizontal|vertical|grid|{...}")),
             }
         }
-        "gap" | "itemSpacing" | "columnGap" => {
+        "gap" | "itemSpacing" | "columnGap" | "spacing" => {
             layout_mut(cmd, k, doc.get_mut(id)?)?.gap = f64_of(v).ok_or_else(|| bad(cmd, format!("`{k}` must be a number")))?
         }
         "crossGap" | "counterAxisSpacing" | "rowGap" => {
@@ -1831,5 +1844,41 @@ mod tests {
         let message = refused.expect_err("an unread setting is refused").to_string();
         assert!(message.contains("packedWith"), "the setting is named: {message}");
         assert!(message.contains("itemSpacing") || message.contains("mainAlign"), "the answer lists what it takes: {message}");
+    }
+
+    #[test]
+    fn color_and_autolayout_aliases_work() {
+        let mut s = crate::Session::new();
+        let page = s.page().unwrap();
+        let res = s
+            .execute(
+                "node.create",
+                &json!({
+                    "type": "rectangle",
+                    "parent": page,
+                    "width": 120,
+                    "height": 60,
+                    "props": {
+                        "color": "#D4AF37",
+                        "autoLayout": true,
+                        "gap": 16,
+                        "cornerRadius": 8
+                    }
+                }),
+            )
+            .expect("node.create accepts color and autoLayout aliases in props");
+        let id = crate::params::id_of(&res["id"]).unwrap();
+        let doc = s.doc().unwrap();
+        let node = doc.node(id).unwrap();
+        assert!(matches!(node.kind, NodeKind::Frame), "rectangle converted to frame when autoLayout was given");
+        assert!(node.layout.is_some(), "layout is set");
+        assert_eq!(node.layout.as_ref().unwrap().gap, 16.0);
+        assert_eq!(node.corners.radii[0], 8.0);
+        assert_eq!(node.fills.len(), 1);
+        if let figcraft_color::PaintKind::Solid { color } = &node.fills[0].kind {
+            assert!(color.to_hex().eq_ignore_ascii_case("d4af37"));
+        } else {
+            panic!("fill should be solid");
+        }
     }
 }

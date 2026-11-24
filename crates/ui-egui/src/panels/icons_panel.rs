@@ -103,8 +103,7 @@ fn polygon_contains(poly: &[egui::Pos2], p: egui::Pos2) -> bool {
     for i in 0..n {
         let j = (i + n - 1) % n;
         let (pi, pj) = (poly[i], poly[j]);
-        let intersect = ((pi.y > p.y) != (pj.y > p.y))
-            && (p.x < (pj.x - pi.x) * (p.y - pi.y) / (pj.y - pi.y) + pi.x);
+        let intersect = ((pi.y > p.y) != (pj.y > p.y)) && (p.x < (pj.x - pi.x) * (p.y - pi.y) / (pj.y - pi.y) + pi.x);
         if intersect {
             inside = !inside;
         }
@@ -145,13 +144,8 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     // 1. Search Box with magnifier icon and proper field frame
     let (fr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::hover());
     let field = Rect::from_min_max(pos2(fr.min.x + 8.0, fr.min.y + 4.0), pos2(fr.max.x - 8.0, fr.max.y - 4.0));
-    let r = crate::widgets::search_box(
-        ui,
-        field,
-        Id::unique("icons_panel_search_field"),
-        &mut app.ui.icons_query,
-        "Search Font Awesome Free (v6)...",
-    );
+    let r =
+        crate::widgets::search_box(ui, field, Id::unique("icons_panel_search_field"), &mut app.ui.icons_query, "Search Font Awesome Free (v6)...");
     if r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
         app.ui.icons_query.clear();
     }
@@ -242,13 +236,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
 
                     let bg_color = if hovered { t.hover } else { t.panel };
                     let icon_color = if hovered { t.accent_text } else { t.icon };
-                    paint_fa_icon(
-                        ui.painter(),
-                        Rect::from_center_size(rect.center(), vec2(20.0, 20.0)),
-                        icon,
-                        icon_color,
-                        bg_color,
-                    );
+                    paint_fa_icon(ui.painter(), Rect::from_center_size(rect.center(), vec2(20.0, 20.0)), icon, icon_color, bg_color);
 
                     let clicked = resp.clicked();
                     resp.tip(format!("{} ({})", icon.name, icon.id));
@@ -334,4 +322,3 @@ mod tests {
         }
     }
 }
-

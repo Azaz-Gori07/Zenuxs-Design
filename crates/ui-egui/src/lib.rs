@@ -353,6 +353,7 @@ pub use panels::dev_mode;
 pub use panels::export_panel;
 pub use panels::frame_presets;
 pub use panels::icons_panel;
+pub use panels::market_panel;
 pub use panels::layers;
 pub use panels::layout_panel;
 pub use panels::list_drag;
@@ -398,7 +399,7 @@ pub(crate) use clock::repaint_in;
 pub use clock::{AUTO_SAVE_SECS, AUTOSAVE_SECS, FrameClock, ToastClock};
 pub(crate) use open::{drop_overlay, dropped_bytes, is_document, opens};
 pub use services::{
-    ContentsFuture, DialogFuture, MAX_CLIPBOARD_PNG_BYTES, NoServices, ReadFuture, Services, browser_can_read, browser_stopped, egui_copy_png,
+    ContentsFuture, DialogFuture, MAX_CLIPBOARD_PNG_BYTES, NoServices, ReadFuture, Services, TextFetchFuture, browser_can_read, browser_stopped, egui_copy_png,
     egui_copy_text, unreadable,
 };
 use services::{DialogDone, PickFuture, Picked, RepaintWaker};
@@ -671,6 +672,10 @@ pub struct UiState {
     /// Icons panel search query and active collection filter.
     pub icons_query: String,
     pub icons_collection: String,
+    /// Market panel search query, category, and source registry filter.
+    pub market_query: String,
+    pub market_category: String,
+    pub market_registry: String,
 }
 
 impl Default for UiState {
@@ -683,6 +688,9 @@ impl Default for UiState {
             right_width: PANEL_DEFAULT,
             icons_query: String::new(),
             icons_collection: String::new(),
+            market_query: String::new(),
+            market_category: String::new(),
+            market_registry: String::new(),
             right_panel_rect: None,
             right_tab: RightTab::Design,
             last_right_tab: RightTab::Design,

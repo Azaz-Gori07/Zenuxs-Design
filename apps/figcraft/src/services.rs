@@ -605,6 +605,15 @@ impl Services for Desktop {
         let png = board.dataForType(&objc2_foundation::NSString::from_str(MACOS_PASTEBOARD_PNG))?;
         (png.len() <= figcraft_ui_egui::MAX_CLIPBOARD_PNG_BYTES).then(|| png.to_vec())
     }
+    #[cfg(not(target_os = "macos"))]
+    fn clipboard_get_png(&mut self) -> Option<Vec<u8>> {
+        let (w, h, rgba) = self.clipboard_get_image()?;
+        let img = image::RgbaImage::from_raw(w, h, rgba)?;
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Png).ok()?;
+        let bytes = out.into_inner();
+        (bytes.len() <= figcraft_ui_egui::MAX_CLIPBOARD_PNG_BYTES).then_some(bytes)
+    }
     fn open_url(&mut self, url: &str) {
         let _ = webbrowser::open(url);
     }
@@ -640,6 +649,35 @@ impl Services for Desktop {
     }
     fn system_language(&self) -> Option<String> {
         self.language.clone()
+    }
+    fn fetch_url(&mut self, url: &str) -> Option<figcraft_ui_egui::TextFetchFuture> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let url_owned = url.to_string();
+        std::thread::Builder::new().name("figcraft-fetch-skill".into()).spawn(move || {
+            let res = figcraft_ai_net::fetch_text(&url_owned);
+            let _ = tx.send(res);
+        }).ok()?;
+        Some(Box::pin(ChannelTextFuture { rx }))
+    }
+}
+
+struct ChannelTextFuture {
+    rx: std::sync::mpsc::Receiver<Result<String, String>>,
+}
+
+impl std::future::Future for ChannelTextFuture {
+    type Output = Result<String, String>;
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        match self.rx.try_recv() {
+            Ok(v) => std::task::Poll::Ready(v),
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                cx.waker().wake_by_ref();
+                std::task::Poll::Pending
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                std::task::Poll::Ready(Err("Channel closed".to_string()))
+            }
+        }
     }
 }
 

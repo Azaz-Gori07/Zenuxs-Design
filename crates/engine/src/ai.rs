@@ -154,6 +154,69 @@ pub fn role_model(settings: &AIModelSettings, role: AIModelRole) -> Option<figcr
     settings.resolve(role)
 }
 
+/// The default local proxy endpoint for keyless free AI models.
+pub const SEED_ENDPOINT: &str = "http://127.0.0.1:20129/v1";
+/// The default free model.
+pub const SEED_MODEL: &str = "deepseek-v4.1-flash-free";
+/// The key expected by the local proxy.
+pub const SEED_KEY: &str = "public";
+
+/// Seed default AI models and credentials if none are configured, and ensure all prompt skills are enabled.
+pub fn seed_defaults(prefs: &mut crate::Prefs, credentials: Option<&mut Box<dyn CredentialStore>>) {
+    use figcraft_ai::models::{AIModelAssignments, AIModelCapability, AIModelConnection, AIModelProfile, AIModelSettings, APIType};
+    use figcraft_ai::providers::ProviderId;
+
+    let models = &mut prefs.ai.models;
+    if models.connections.is_empty() || models.models.is_empty() {
+        let connection = AIModelConnection {
+            id: "connection-page".into(),
+            provider: ProviderId::OpenaiCompatible,
+            custom_base_url: SEED_ENDPOINT.into(),
+            custom_api_type: APIType::Completions,
+            credential_profile_id: String::new(),
+        };
+        let profile = AIModelProfile {
+            id: "model-page".into(),
+            name: SEED_MODEL.into(),
+            connection_id: connection.id.clone(),
+            model_id: SEED_MODEL.into(),
+            custom_model_id: String::new(),
+            max_output_tokens: 8192,
+            reasoning_effort: None,
+            capabilities: vec![AIModelCapability::Tools, AIModelCapability::Vision],
+        };
+        *models = AIModelSettings {
+            version: 1,
+            connections: vec![connection],
+            models: vec![profile],
+            assignments: AIModelAssignments {
+                design: "model-page".into(),
+                review: "model-page".into(),
+                fast: "model-page".into(),
+                vision: "model-page".into(),
+            },
+        };
+    }
+
+    if let Some(store) = credentials {
+        for connection in &prefs.ai.models.connections {
+            if connection.id == "connection-page" || connection.custom_base_url.contains("20129") {
+                let reference = crate::cmd::ai::credential_ref_for(connection);
+                if store.read(&reference).ok().flatten().is_none_or(|k| k.trim().is_empty()) {
+                    let _ = store.write(&reference, SEED_KEY);
+                }
+            }
+        }
+    }
+
+    // Ensure all default prompt skills are enabled unless explicitly disabled
+    for default in figcraft_ai::skills::prompt::default_prompt_skills() {
+        if !prefs.ai.skills.skills.iter().any(|s| (s.id == default.id || s.name == default.name) && !s.enabled) {
+            prefs.ai.skills.set_enabled(&default.id, true);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

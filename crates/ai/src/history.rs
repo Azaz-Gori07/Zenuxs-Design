@@ -302,7 +302,7 @@ mod tests {
     #[test]
     fn a_saved_chat_never_ends_on_an_orphan_tool_answer() {
         let mut c = ChatConversation { id: "c".into(), title: "C".into(), document: None, messages: vec![], updated_at: 0 };
-        c.push(ChatMessage { role: Role::Tool, content: "{}".into(), tool_call_id: Some("x".into()), tool_calls: vec![] });
+        c.push(ChatMessage::tool_result("x", "{}"));
         for _ in 0..(MAX_SAVED_MESSAGES + 10) {
             c.push(ChatMessage::user("more"));
         }

@@ -116,7 +116,7 @@ async fn ask_inner(request: &ChatRequest, on_event: &mut dyn FnMut(StreamEvent))
     for event in lines.finish() {
         on_event(event);
     }
-    drop(reader.release_lock());
+    reader.release_lock();
     finish(request.protocol, &collected)
 }
 

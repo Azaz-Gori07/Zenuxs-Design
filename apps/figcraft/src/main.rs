@@ -230,6 +230,7 @@ fn main() -> eframe::Result {
     session.plugins.install_dir = services::config_dir().map(|d| d.join("Plugins"));
     // The API keys the AI settings name: a file of their own, owner-only, next to the preferences.
     session.credentials = Some(Box::new(services::DesktopCredentials::load(services::config_dir().as_deref())));
+    figcraft_engine::ai::seed_defaults(&mut session.prefs, session.credentials.as_mut());
     // Invite links open this app (Windows registers per user at run time; installed builds by
     // default, never a build from source unless asked).
     session.live.links = figcraft_collab_net::links::system();

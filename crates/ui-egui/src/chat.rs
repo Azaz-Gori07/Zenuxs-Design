@@ -87,6 +87,21 @@ pub struct Panel {
     pub review_rounds: usize,
     /// The title being typed for a rename, when one is open.
     pub rename: Option<String>,
+    /// Image currently attached to the composer draft (pasted from clipboard or selected).
+    pub attached_image: Option<ChatAttachment>,
+    /// Whether the composer text field should gain focus on the next frame.
+    pub focus_draft: bool,
+    /// Last selected element id, used to auto-mention newly clicked/selected elements.
+    pub last_selected_id: Option<u64>,
+}
+
+/// An image attached to the composer draft (pasted or selected).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChatAttachment {
+    pub name: String,
+    pub mime: String,
+    pub data_url: String,
+    pub preview_bytes: Vec<u8>,
 }
 
 impl Default for Panel {
@@ -107,6 +122,9 @@ impl Default for Panel {
             rename: None,
             empty_answers: 0,
             review_rounds: 0,
+            attached_image: None,
+            focus_draft: false,
+            last_selected_id: None,
         }
     }
 }
@@ -192,9 +210,30 @@ fn call_mcp_tool(factory: &dyn figcraft_ai::McpFactory, server: &McpServer, tool
 
 /// The system prompt: what the model is, and how the work is done here.
 const SYSTEM_PROMPT: &str = "\
-You are the design agent inside FigCraft, an interface design tool. You create and change designs \
-by running FigCraft's own commands. Be direct, use design terminology, and after finishing give a \
+You are the design agent inside sycnUI, an interface design tool. You create and change designs \
+by running sycnUI's own commands. Be direct, use design terminology, and after finishing give a \
 2-3 line summary: frame sizes, the accent colours, and anything still wrong.
+
+# Multimodal and attached images
+
+When the user attaches or pastes an image or screenshot in the chat, carefully inspect its visual \
+hierarchy, layout structure, color palette, typography, components, and proportions. You have full vision \
+capability to examine the image. Directly build, replicate, or adapt the design on the canvas using \
+sycnUI tools (frames, auto layout, shapes, text, styling).
+
+# Mentioned and target elements
+
+When the user prompt mentions an element or target layers are specified under SELECTED & MENTIONED TARGET LAYERS:
+- Directly target and modify those specific element(s) by their node id using `set_properties`, `create_node` (for children), `layout.set`, and `props.text`.
+- DO NOT recreate the element or hallucinate a new layer unless the user explicitly requests duplicating or replacing it.
+- Respect and preserve existing position, dimensions, parent hierarchy, and auto layout properties unless instructed to alter them.
+
+# Component Marketplace Priority (#1 Rule for Generating UI)
+
+When the user asks to build or design any UI screen, feature, or element (e.g., \"create a dashboard\", \"add a login form\", \"make a kanban board\", \"add buttons\", \"create a pricing table\", \"add charts\"):
+1. FIRST PRIORITY: Always search and pick matching prebuilt components from the **Market Registry** (@shadcn, @originui, @kibo, @cult, @animate-ui, @bundui, @neobrutalism) using `search_market_components`.
+2. CUSTOMIZATION: Use `add_market_component_to_canvas` to instantiate the matched component with customized titles, labels, values, and color themes tailored to the user's brief.
+3. FALLBACK ONLY: Only if no suitable component exists in the Market Registry should you generate custom primitive elements from scratch.
 
 # Build, do not interview
 
@@ -220,6 +259,8 @@ Everything the document takes is a command. Your tools are commands:
 - `screenshot` — look at what you built: it renders the layers and reads them back through the Vision model, which tells you what it sees and what is visibly wrong. Use it before you call a screen finished.
 - `audit_layout` — the layout measured rather than looked at. It answers with numbers the picture cannot give you: which text layer is clipped, how many pixels of it are cut off, which picture slot is still an empty box, which layer floats loose on the page, which frame has no size. Every finding carries the layer id and the fix. Run it before `review_design`.
 - `review_design` — the same pixels, graded by the reviewer as a designer: hierarchy, alignment, spacing rhythm, type scale, contrast, and the specific faults with where each one is.
+- `search_market_components` — search 100% free verified prebuilt components from Shadcn ecosystem registries (@shadcn, @originui, @kibo, @cult, @animate-ui, @bundui, @neobrutalism). Use this FIRST before drawing primitive elements.
+- `add_market_component_to_canvas` — instantiate prebuilt Market components on canvas with customized props and titles.
 - `source_image` — a picture for a slot, searched in the public libraries that need no key and verified by the Vision model before it is placed. One call for every image on the screen.
 - `generate_image` — an original picture, when a photo would not exist. Needs an image model on the connection; `source_image` is the one that works with none.
 
@@ -287,9 +328,14 @@ does not exist, say so and offer the nearest one that does.";
 /// the first request goes out. `Err` says what to fix in the settings.
 pub fn send(app: &mut FigApp, text: &str) -> Result<(), String> {
     let text = text.trim().to_string();
-    if text.is_empty() {
+    if text.is_empty() && app.ui.chat.attached_image.is_none() {
         return Ok(());
     }
+    let text = if text.is_empty() {
+        "Please inspect this image and build or adapt this design in sycnUI.".to_string()
+    } else {
+        text
+    };
     if app.ui.chat.streaming.is_some() {
         return Err(tr("A request is already out. Stop it first.").to_string());
     }
@@ -306,7 +352,14 @@ pub fn send(app: &mut FigApp, text: &str) -> Result<(), String> {
     let selection = selection_context(app);
 
     let user = if skills_block.is_empty() { text } else { format!("{text}{skills_block}") };
-    app.session.chat_append(ChatMessage::user(user)).map_err(|e| e.to_string())?;
+    let attached = app.ui.chat.attached_image.take();
+    let images = attached.map(|a| vec![a.data_url]).unwrap_or_default();
+    let msg = if images.is_empty() {
+        ChatMessage::user(user)
+    } else {
+        ChatMessage::user_with_images(user, images)
+    };
+    app.session.chat_append(msg).map_err(|e| e.to_string())?;
     app.session.chat.context = selection;
 
     dispatch(app)
@@ -386,6 +439,63 @@ fn routing_context(app: &FigApp) -> figcraft_ai::skills::RoutingContext {
     }
 }
 
+/// Information about the currently selected and mentioned target element.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MentionInfo {
+    pub name: String,
+    pub kind: &'static str,
+    pub id: u64,
+    pub count: usize,
+}
+
+pub fn selection_mention_info(app: &FigApp) -> Option<MentionInfo> {
+    if !app.ui.chat.with_selection {
+        return None;
+    }
+    let ds = app.session.ds().ok()?;
+    if ds.selection.is_empty() {
+        return None;
+    }
+    let count = ds.selection.len();
+    let first_id = ds.selection[0];
+    let node = ds.doc.node(first_id)?;
+    let kind = match &node.kind {
+        figcraft_doc::NodeKind::Frame => "Frame",
+        figcraft_doc::NodeKind::Group => "Group",
+        figcraft_doc::NodeKind::Section { .. } => "Section",
+        figcraft_doc::NodeKind::Rectangle => "Rectangle",
+        figcraft_doc::NodeKind::Ellipse { .. } => "Ellipse",
+        figcraft_doc::NodeKind::Line => "Line",
+        figcraft_doc::NodeKind::Text(_) => "Text",
+        figcraft_doc::NodeKind::Component { .. } => "Component",
+        figcraft_doc::NodeKind::ComponentSet { .. } => "ComponentSet",
+        figcraft_doc::NodeKind::Instance { .. } => "Instance",
+        figcraft_doc::NodeKind::Star { .. } => "Star",
+        figcraft_doc::NodeKind::Polygon { .. } => "Polygon",
+        figcraft_doc::NodeKind::Vector { .. } => "Vector",
+        _ => "Element",
+    };
+    if count == 1 {
+        Some(MentionInfo {
+            name: node.name.clone(),
+            kind,
+            id: first_id.0,
+            count: 1,
+        })
+    } else {
+        Some(MentionInfo {
+            name: format!("{} + {} more", node.name, count - 1),
+            kind: "Selection",
+            id: first_id.0,
+            count,
+        })
+    }
+}
+
+fn mention_height(app: &FigApp) -> f32 {
+    if selection_mention_info(app).is_some() { 32.0 } else { 0.0 }
+}
+
 /// The selection and the page, as the model reads them.
 ///
 /// The composer's pointer control decides whether the selection rides along: a person who
@@ -395,15 +505,59 @@ fn selection_context(app: &mut FigApp) -> String {
     let Ok(ds) = app.session.ds() else { return String::new() };
     let page = ds.doc.node(ds.page).map(|n| n.name.clone()).unwrap_or_default();
     let page_id = ds.page.0;
-    let Some(id) = ds.selection.first().map(|id| id.0).filter(|_| with_selection) else {
+    if !with_selection || ds.selection.is_empty() {
         return format!("Page: {page} (id {page_id}). Nothing is selected.");
-    };
-    let n = ds.selection.iter().filter(|id| ds.doc.node(**id).is_some()).count();
-    if n <= 1 {
-        format!("Page: {page} (id {page_id}). Selection: one layer, id {id}.")
-    } else {
-        format!("Page: {page} (id {page_id}). Selection: {n} layers, first id {id}.")
     }
+    let n = ds.selection.iter().filter(|id| ds.doc.node(**id).is_some()).count();
+    let first_id = ds.selection.first().map(|id| id.0).unwrap_or(0);
+    let mut out = if n <= 1 {
+        format!("Page: {page} (id {page_id}). Selection: one layer, id {first_id}.\n")
+    } else {
+        format!("Page: {page} (id {page_id}). Selection: {n} layers, first id {first_id}.\n")
+    };
+    out.push_str("SELECTED & MENTIONED TARGET LAYERS (Apply changes, styling, or text updates directly to these elements):\n");
+    for id in &ds.selection {
+        if let Some(node) = ds.doc.node(*id) {
+            let kind_str = match &node.kind {
+                figcraft_doc::NodeKind::Frame => "Frame",
+                figcraft_doc::NodeKind::Group => "Group",
+                figcraft_doc::NodeKind::Section { .. } => "Section",
+                figcraft_doc::NodeKind::Rectangle => "Rectangle",
+                figcraft_doc::NodeKind::Ellipse { .. } => "Ellipse",
+                figcraft_doc::NodeKind::Line => "Line",
+                figcraft_doc::NodeKind::Text(_) => "Text",
+                figcraft_doc::NodeKind::Component { .. } => "Component",
+                figcraft_doc::NodeKind::ComponentSet { .. } => "ComponentSet",
+                figcraft_doc::NodeKind::Instance { .. } => "Instance",
+                figcraft_doc::NodeKind::Star { .. } => "Star",
+                figcraft_doc::NodeKind::Polygon { .. } => "Polygon",
+                figcraft_doc::NodeKind::Vector { .. } => "Vector",
+                _ => "Layer",
+            };
+            if let Some(b) = ds.doc.bounds_of(&[*id]) {
+                out.push_str(&format!(
+                    "- Node #{} (\"{}\", {}): bounds [x: {:.1}, y: {:.1}, w: {:.1}, h: {:.1}]",
+                    node.id.0, node.name, kind_str, b.x0, b.y0, b.width(), b.height()
+                ));
+            } else {
+                out.push_str(&format!(
+                    "- Node #{} (\"{}\", {}): size [w: {:.1}, h: {:.1}]",
+                    node.id.0, node.name, kind_str, node.width, node.height
+                ));
+            }
+            if let Some(text) = node.kind.text() {
+                out.push_str(&format!(", text: \"{}\"", text.characters));
+            }
+            if let Some(layout) = &node.layout {
+                out.push_str(&format!(", autoLayout: mode={:?} gap={:.1}", layout.mode, layout.gap));
+            }
+            if !node.children.is_empty() {
+                out.push_str(&format!(", childrenCount: {}", node.children.len()));
+            }
+            out.push('\n');
+        }
+    }
+    out
 }
 
 /// The MCP servers the send may reach, with their tokens resolved.
@@ -623,6 +777,13 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
     // The answer is in. Its text and its tool calls become the conversation; the engine's own
     // tools run here on the interface thread, and the MCP calls on their worker.
     if finished && let Some(mut streaming) = app.ui.chat.streaming.take() {
+        if let Some(err_msg) = app.ui.chat.failure.clone() {
+            app.session.chat.busy = false;
+            let _ = app.session.chat_append(ChatMessage::assistant(format!("❌ **Provider Error:** {err_msg}")));
+            ctx.request_repaint();
+            return true;
+        }
+
         let calls = streaming.tool_calls.clone();
         if calls.is_empty() {
             // An answer with nothing more to do: the send is over. Two things can still be wrong
@@ -644,6 +805,7 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
             const MAX_REVIEW_ROUNDS: usize = 3;
             if streaming.step > 0
                 && app.ui.chat.review_rounds < MAX_REVIEW_ROUNDS
+                && !streaming.text.trim().is_empty()
                 && let Some(blockers) = audit_blockers(app)
             {
                 app.ui.chat.review_rounds += 1;
@@ -660,7 +822,10 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
                         ctx.request_repaint();
                         return false;
                     }
-                    Err(e) => app.ui.chat.failure = Some(e),
+                    Err(e) => {
+                        app.ui.chat.failure = Some(e.clone());
+                        let _ = app.session.chat_append(ChatMessage::assistant(format!("❌ **Provider Error:** {e}")));
+                    }
                 }
             }
             // An answer with no text and no audit finding gets one more ask: an empty response
@@ -676,7 +841,10 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
                         ctx.request_repaint();
                         return false;
                     }
-                    Err(e) => app.ui.chat.failure = Some(e),
+                    Err(e) => {
+                        app.ui.chat.failure = Some(e.clone());
+                        let _ = app.session.chat_append(ChatMessage::assistant(format!("❌ **Provider Error:** {e}")));
+                    }
                 }
             }
             app.session.chat.busy = false;
@@ -684,7 +852,11 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
             // A model that answers with nothing is a failure the person must see: silently
             // returning to an unchanged canvas reads as "the AI did nothing".
             if streaming.text.trim().is_empty() {
-                app.ui.chat.failure = Some(tr("The model answered with nothing. Try again, or pick another model in AI & Agents.").to_string());
+                if app.ui.chat.failure.is_none() {
+                    let err = tr("The model answered with nothing. Try again, or pick another model in AI & Agents.").to_string();
+                    app.ui.chat.failure = Some(err.clone());
+                    let _ = app.session.chat_append(ChatMessage::assistant(format!("❌ {err}")));
+                }
             } else {
                 app.ui.chat.empty_answers = 0;
             }
@@ -1767,7 +1939,7 @@ fn header(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32) {
     // "FigCraft AI", and under it which conversation this is.
     let left = mark.max.x + 8.0;
     let room = (options.min.x - 6.0 - left).max(20.0);
-    ui.painter().text(pos2(left, row.min.y + 5.0), Align2::LEFT_TOP, tr("FigCraft AI"), semibold(13.0), t.text);
+    ui.painter().text(pos2(left, row.min.y + 5.0), Align2::LEFT_TOP, tr("sycnUI AI"), semibold(13.0), t.text);
     let title = active_title(app).unwrap_or_else(|| tr("Your design partner").to_string());
     let sub = widgets::elide_font(ui, &title, room - 6.0, regular(11.0));
     ui.painter().text(pos2(left, row.min.y + 22.0), Align2::LEFT_TOP, &sub, regular(11.0), t.text_secondary);
@@ -1887,6 +2059,43 @@ fn chat_menu(app: &mut FigApp, anchor: &egui::Response, t: &Tokens) {
     }
 }
 
+/// Attach an image from raw bytes to the composer draft.
+fn attach_image_from_bytes(app: &mut FigApp, name: String, bytes: Vec<u8>) {
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let lower = name.to_lowercase();
+    let mime = if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if lower.ends_with(".webp") {
+        "image/webp"
+    } else {
+        "image/png"
+    };
+    app.ui.chat.attached_image = Some(ChatAttachment {
+        name,
+        mime: mime.into(),
+        data_url: format!("data:{mime};base64,{b64}"),
+        preview_bytes: bytes,
+    });
+}
+
+/// Decode an attachment data URL into a TextureHandle for thumbnail rendering.
+fn decode_attachment_texture(ctx: &Context, data_url: &str) -> Option<egui::TextureHandle> {
+    use base64::Engine as _;
+    let rest = data_url.strip_prefix("data:")?;
+    let (_, b64) = rest.split_once(";base64,")?;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(b64.trim()).ok()?;
+    let pic = figcraft_format::thumbnail::decode_thumbnail(&bytes, 160)?;
+    let image = egui::ColorImage::from_rgba_unmultiplied([pic.width as usize, pic.height as usize], &pic.rgba);
+    let id = format!("chat-thumb-{}", bytes.len());
+    Some(ctx.load_texture(id, image, egui::TextureOptions::LINEAR))
+}
+
+/// Extra height reserved when an image is attached to the composer.
+fn attachment_height(app: &FigApp) -> f32 {
+    if app.ui.chat.attached_image.is_some() { 34.0 } else { 0.0 }
+}
+
 /// The gap between the composer's field and the bar under it, counted once by
 /// [`composer_height`] and once by [`composer`]: the two must agree or the field and its bar
 /// drift apart as the draft grows.
@@ -1900,7 +2109,7 @@ fn composer_height(app: &FigApp, ctx: &egui::Context, width: f32) -> f32 {
     let per_line = (inner / 6.3).max(8.0);
     let lines = (app.ui.chat.draft.chars().count() as f32 / per_line).ceil().clamp(1.0, 4.0);
     let field = (lines * COMPOSER_LEADING + 16.0).clamp(COMPOSER_MIN_H, COMPOSER_MAX_H);
-    field + COMPOSER_BAR_H + COMPOSER_GAP + failure_height(app, ctx, width)
+    field + COMPOSER_BAR_H + COMPOSER_GAP + failure_height(app, ctx, width) + attachment_height(app) + mention_height(app)
 }
 
 /// The room the failure line needs: nothing when there is no failure.
@@ -1925,12 +2134,140 @@ fn composer(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32) {
     let field_w = (width - 20.0).max(40.0);
     let total = ui.available_height();
     let fail_h = failure_height(app, ui.ctx(), width);
-    let field_h = (total - COMPOSER_BAR_H - COMPOSER_GAP - fail_h).clamp(COMPOSER_MIN_H, COMPOSER_MAX_H);
-    let rect = Rect::from_min_size(pos2(ui.max_rect().min.x + 10.0, ui.max_rect().min.y), vec2(field_w, field_h));
+    let att_h = attachment_height(app);
+    let men_h = mention_height(app);
+    let field_h = (total - COMPOSER_BAR_H - COMPOSER_GAP - fail_h - att_h - men_h).clamp(COMPOSER_MIN_H, COMPOSER_MAX_H);
+
+    // Auto-mention when user clicks/selects any element or screen:
+    if let Ok(ds) = app.session.ds() {
+        let current_first_sel = ds.selection.first().map(|id| id.0);
+        if current_first_sel.is_some() && current_first_sel != app.ui.chat.last_selected_id {
+            app.ui.chat.last_selected_id = current_first_sel;
+            app.ui.chat.with_selection = true;
+        } else if current_first_sel.is_none() {
+            app.ui.chat.last_selected_id = None;
+        }
+    }
+
+    // 1. Image paste handling (Ctrl+V / Cmd+V or PasteImage event)
+    let has_focus = ui.memory(|m| m.has_focus(draft_id()));
+    let is_hovered = ui.max_rect().contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or(egui::Pos2::ZERO));
+    let is_paste = (has_focus || is_hovered)
+        && ui.input(|i| {
+            let v_key = i.key_pressed(egui::Key::V) && (i.modifiers.ctrl || i.modifiers.command);
+            let paste_event = i.events.iter().any(|e| matches!(e, egui::Event::PasteImage(_)));
+            v_key || paste_event
+        });
+
+    if is_paste
+        && let Some((png_bytes, _, _)) = crate::menus::clipboard_png(app)
+    {
+        attach_image_from_bytes(app, "pasted_image.png".into(), png_bytes);
+        ui.ctx().request_repaint();
+    }
+
+    // 2. Drag & drop image files onto composer
+    let dropped_files = ui.ctx().input(|i| i.raw.dropped_files.clone());
+    if !dropped_files.is_empty() && (has_focus || is_hovered) {
+        for _f in dropped_files {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let f = _f;
+                let path = f.path().to_path_buf();
+                if let Ok(bytes) = f.bytes()
+                    && bytes.len() <= crate::MAX_CLIPBOARD_PNG_BYTES
+                {
+                    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "image.png".into());
+                    attach_image_from_bytes(app, name, bytes);
+                    ui.ctx().request_repaint();
+                    break;
+                } else if path.exists()
+                    && let Ok(bytes) = std::fs::read(&path)
+                    && bytes.len() <= crate::MAX_CLIPBOARD_PNG_BYTES
+                {
+                    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "image.png".into());
+                    attach_image_from_bytes(app, name, bytes);
+                    ui.ctx().request_repaint();
+                    break;
+                }
+            }
+        }
+    }
+
+    let mut start_y = ui.max_rect().min.y;
+
+    // Render active target element mention chip
+    if let Some(mention) = selection_mention_info(app) {
+        let chip_rect = Rect::from_min_size(pos2(ui.max_rect().min.x + 10.0, start_y), vec2(field_w, 26.0));
+        ui.painter().rect_filled(chip_rect, CornerRadius::same(6), t.accent.gamma_multiply(0.12));
+        ui.painter().rect_stroke(chip_rect, CornerRadius::same(6), Stroke::new(1.0, t.accent.gamma_multiply(0.4)), egui::StrokeKind::Inside);
+
+        let icon_r = Rect::from_min_size(pos2(chip_rect.min.x + 6.0, chip_rect.min.y + 5.0), vec2(16.0, 16.0));
+        icons::paint(ui.painter(), Rect::from_center_size(icon_r.center(), Vec2::splat(12.0)), Icon::Sparkle, t.accent);
+
+        let label = format!("@{} ({})", mention.name, mention.kind);
+        let max_label_w = (field_w - 56.0).max(20.0);
+        let shown = widgets::elide_font(ui, &label, max_label_w, regular(11.0));
+        let text_r = Rect::from_min_max(pos2(icon_r.max.x + 4.0, chip_rect.min.y), pos2(chip_rect.max.x - 24.0, chip_rect.max.y));
+        let _ = ui.interact(text_r, egui::Id::unique("chat_mention_tag"), Sense::click()).tip("Mentioned target element: prompts will directly modify this element");
+        ui.painter().text(pos2(icon_r.max.x + 4.0, chip_rect.center().y), Align2::LEFT_CENTER, shown, regular(11.0), t.accent_text);
+
+        let close_r = Rect::from_min_size(pos2(chip_rect.max.x - 22.0, chip_rect.min.y + 4.0), vec2(18.0, 18.0));
+        let close_resp = ui.interact(close_r, egui::Id::unique("chat_mention_clear"), Sense::click()).tip("Unmention element (send page only)");
+        if close_resp.hovered() {
+            ui.painter().rect_filled(close_r, CornerRadius::same(4), t.hover);
+        }
+        icons::paint(ui.painter(), Rect::from_center_size(close_r.center(), Vec2::splat(9.0)), Icon::Close, t.icon_secondary);
+        if close_resp.clicked() {
+            app.ui.chat.with_selection = false;
+            ui.ctx().request_repaint();
+        }
+        start_y += 32.0;
+    }
+
+    if let Some(att) = &app.ui.chat.attached_image {
+        let chip_rect = Rect::from_min_size(pos2(ui.max_rect().min.x + 10.0, start_y), vec2(field_w, 28.0));
+        ui.painter().rect_filled(chip_rect, CornerRadius::same(6), t.field);
+        ui.painter().rect_stroke(chip_rect, CornerRadius::same(6), Stroke::new(1.0, t.border_strong), egui::StrokeKind::Inside);
+
+        let thumb_r = Rect::from_min_size(pos2(chip_rect.min.x + 4.0, chip_rect.min.y + 4.0), vec2(20.0, 20.0));
+        if let Some(tex) = decode_attachment_texture(ui.ctx(), &att.data_url) {
+            ui.painter().image(tex.id(), thumb_r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        } else {
+            icons::paint(ui.painter(), Rect::from_center_size(thumb_r.center(), Vec2::splat(13.0)), Icon::Image, t.accent_text);
+        }
+
+        let kb = (att.preview_bytes.len() as f32 / 1024.0).max(0.1);
+        let label = format!("{} ({:.1} KB)", att.name, kb);
+        let max_label_w = (field_w - 56.0).max(20.0);
+        let shown = widgets::elide_font(ui, &label, max_label_w, regular(11.0));
+        ui.painter().text(pos2(thumb_r.max.x + 6.0, chip_rect.center().y), Align2::LEFT_CENTER, shown, regular(11.0), t.text);
+
+        let close_r = Rect::from_min_size(pos2(chip_rect.max.x - 24.0, chip_rect.min.y + 4.0), vec2(20.0, 20.0));
+        let close_resp = ui.interact(close_r, egui::Id::unique("chat_attachment_clear"), Sense::click()).tip("Remove attachment");
+        if close_resp.hovered() {
+            ui.painter().rect_filled(close_r, CornerRadius::same(4), t.hover);
+        }
+        icons::paint(ui.painter(), Rect::from_center_size(close_r.center(), Vec2::splat(9.0)), Icon::Close, t.icon_secondary);
+        if close_resp.clicked() {
+            app.ui.chat.attached_image = None;
+            ui.ctx().request_repaint();
+        }
+        start_y += 34.0;
+    }
+
+    let rect = Rect::from_min_size(pos2(ui.max_rect().min.x + 10.0, start_y), vec2(field_w, field_h));
     paint_composer_field(ui, t, rect);
     let text_rect = rect.shrink2(vec2(9.0, 7.0));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(text_rect).layout(egui::Layout::top_down(egui::Align::Min)));
     let text_w = text_rect.width();
+
+    let hint_text = if let Some(m) = selection_mention_info(app) {
+        format!("Ask AI to change @{}…", m.name)
+    } else {
+        "Describe what you want to build or paste an image…".to_string()
+    };
+
     egui::ScrollArea::vertical().id_salt("chat_draft_scroll").max_height(text_rect.height()).auto_shrink([false, false]).show(&mut child, |ui| {
         ui.set_width(text_w);
         ui.add(
@@ -1940,16 +2277,31 @@ fn composer(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32) {
                 .desired_width(text_w)
                 .desired_rows(1)
                 .return_key(None)
-                .hint_text(tr("Describe what you want to build…"))
+                .hint_text(hint_text)
                 .font(regular(COMPOSER_TEXT_PX))
                 .text_color(t.text),
         );
     });
+
+    if std::mem::take(&mut app.ui.chat.focus_draft) {
+        ui.ctx().memory_mut(|m| m.request_focus(draft_id()));
+    }
+    if ui.rect_contains_pointer(rect) && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary)) {
+        if let Some((png_bytes, _, _)) = crate::menus::clipboard_png(app) {
+            attach_image_from_bytes(app, "pasted_image.png".into(), png_bytes);
+            app.toast("Image attached from clipboard");
+            ui.ctx().request_repaint();
+        } else if let Some(text) = app.services.clipboard_get_text()
+            && !text.is_empty()
+        {
+            app.ui.chat.draft.push_str(&text);
+            ui.ctx().request_repaint();
+        }
+    }
     // Enter sends and Shift+Enter is a newline: the field takes no return key, so the key is read
     // here (the events are not consumed by the editor's own filtering).
-    let has_focus = ui.memory(|m| m.has_focus(draft_id()));
     let entered = has_focus && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift && !i.modifiers.ctrl && !i.modifiers.command);
-    if entered && !busy && !app.ui.chat.draft.trim().is_empty() {
+    if entered && !busy && (!app.ui.chat.draft.trim().is_empty() || app.ui.chat.attached_image.is_some()) {
         let draft = std::mem::take(&mut app.ui.chat.draft);
         match send(app, &draft) {
             Ok(()) => app.ui.chat.stick = true,
@@ -1988,10 +2340,14 @@ fn composer_bar(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32, busy: boo
     };
     let send_w = 62.0;
     let scope_w = 22.0;
-    let room = (bar.max.x - x - send_w - scope_w - 10.0).max(20.0);
+    let attach_w = 22.0;
+    let room = (bar.max.x - x - send_w - scope_w - attach_w - 14.0).max(20.0);
     let ok = app.session.chat_model(AIModelRole::Design).is_ok();
     let model_r = Rect::from_min_size(pos2(x, bar.min.y), vec2(room, bar.height()));
-    let model_resp = ui.interact(model_r, egui::Id::unique("chat_model"), Sense::click()).tip(tr("The model that answers: AI & Agents"));
+    let model_resp = ui.interact(model_r, egui::Id::unique("chat_model"), Sense::click()).tip("Select active model or manage models");
+    if model_resp.hovered() {
+        ui.painter().rect_filled(model_r, CornerRadius::same(5), t.hover);
+    }
     let shown = widgets::elide_font(ui, &model, room - 16.0, regular(11.0));
     icons::paint(
         ui.painter(),
@@ -2006,11 +2362,101 @@ fn composer_bar(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32, busy: boo
         regular(11.0),
         if ok { t.text_secondary } else { t.danger },
     );
-    a11y::button(&model_resp, tr("The model that answers"));
-    if model_resp.clicked() {
+    a11y::button(&model_resp, "Select active model");
+
+    let mut chosen_model_id = None;
+    let mut open_settings = false;
+    crate::right::menu_popup(&model_resp).width(240.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        ui.spacing_mut().item_spacing.y = 4.0;
+        ui.add_space(2.0);
+        ui.horizontal(|ui| {
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new("Select Model").font(crate::theme::semibold(11.0)).color(t.text));
+        });
+        ui.separator();
+
+        let models = app.session.prefs.ai.models.models.clone();
+        let active_id = app.session.prefs.ai.models.assignments.design.clone();
+
+        if models.is_empty() {
+            ui.horizontal(|ui| {
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("No models configured").font(regular(11.0)).color(t.text_secondary));
+            });
+        } else {
+            for m in &models {
+                let is_active = m.id == active_id;
+                let display_name = if !m.name.trim().is_empty() {
+                    m.name.clone()
+                } else if !m.model_id.trim().is_empty() {
+                    m.model_id.clone()
+                } else {
+                    m.id.clone()
+                };
+                if crate::right::menu_check(ui, is_active, &display_name, "") {
+                    chosen_model_id = Some((m.id.clone(), display_name));
+                    ui.close();
+                }
+            }
+        }
+
+        ui.separator();
+        if crate::right::menu_item(ui, "Manage models…", "") {
+            open_settings = true;
+            ui.close();
+        }
+    });
+
+    if let Some((mid, name)) = chosen_model_id {
+        app.run("ai.role.assign", json!({"role": "all", "modelId": mid}));
+        app.toast(format!("Switched to {}", name));
+    }
+    if open_settings {
         app.run("ai.settings", json!({}));
     }
-    x = bar.max.x - send_w - scope_w - 6.0;
+    x = bar.max.x - send_w - scope_w - attach_w - 10.0;
+
+    // Attach image button (paperclip / image)
+    let attach_r = Rect::from_min_size(pos2(x, bar.center().y - 10.0), Vec2::splat(20.0));
+    let has_attachment = app.ui.chat.attached_image.is_some();
+    let attach_resp = ui.interact(attach_r, egui::Id::unique("chat_attach_image"), Sense::click()).tip(if has_attachment {
+        "Image attached (click to browse or replace, right-click to paste clipboard)"
+    } else {
+        "Attach image (click to browse files, right-click to paste clipboard, or press Ctrl+V)"
+    });
+    if attach_resp.hovered() {
+        ui.painter().rect_filled(attach_r, CornerRadius::same(5), t.hover);
+    }
+    icons::paint(
+        ui.painter(),
+        Rect::from_center_size(attach_r.center(), Vec2::splat(13.0)),
+        Icon::Image,
+        if has_attachment { t.accent_text } else { t.icon_secondary },
+    );
+    a11y::button(&attach_resp, "Attach image");
+    if attach_resp.clicked() {
+        app.pick_file("Attach image for vision", &["png", "jpg", "jpeg", "webp"], false, |app, params| {
+            if let Some(b64) = params.get("data").and_then(Value::as_str) {
+                use base64::Engine as _;
+                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) {
+                    let name = params.get("name").and_then(Value::as_str).unwrap_or("image.png").to_string();
+                    attach_image_from_bytes(app, name, bytes);
+                }
+            } else if let Some(path) = params.get("path").and_then(Value::as_str)
+                && let Ok(bytes) = std::fs::read(path)
+            {
+                let name = std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("image.png").to_string();
+                attach_image_from_bytes(app, name, bytes);
+            }
+        });
+    } else if attach_resp.secondary_clicked()
+        && let Some((png_bytes, _, _)) = crate::menus::clipboard_png(app)
+    {
+        attach_image_from_bytes(app, "pasted_image.png".into(), png_bytes);
+        app.toast("Image attached from clipboard");
+    }
+
+    x += attach_w + 4.0;
     // Send the selection with the message.
     let sel_r = Rect::from_min_size(pos2(x, bar.center().y - 10.0), Vec2::splat(20.0));
     let sel_resp = ui.interact(sel_r, egui::Id::unique("chat_with_selection"), Sense::click()).tip(if with_selection {
@@ -2034,7 +2480,7 @@ fn composer_bar(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32, busy: boo
     }
     // Send, or Stop while an answer streams.
     let send_r = Rect::from_min_size(pos2(bar.max.x - send_w, bar.min.y), vec2(send_w, bar.height()));
-    let can = busy || !app.ui.chat.draft.trim().is_empty();
+    let can = busy || !app.ui.chat.draft.trim().is_empty() || app.ui.chat.attached_image.is_some();
     let resp = ui.interact(send_r, egui::Id::unique("chat_send"), Sense::click()).tip(if busy { tr("Stop") } else { tr("Send") });
     let bg = if busy {
         t.selected_row
@@ -2132,7 +2578,7 @@ fn transcript_body(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32) {
     }
     for (i, message) in messages.iter().enumerate() {
         match message.role {
-            Role::User => user_message(ui, t, &message.content, width),
+            Role::User => user_message(ui, t, &message.content, &message.images, width),
             Role::Assistant => {
                 if !message.content.is_empty() {
                     answer(ui, t, &message.content, width);
@@ -2216,15 +2662,35 @@ fn continue_button(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32) {
 }
 
 /// A message from the person: the brand pill, right-aligned and no wider than 85 % of the panel.
-fn user_message(ui: &mut Ui, t: &Tokens, text: &str, width: f32) {
+fn user_message(ui: &mut Ui, t: &Tokens, text: &str, images: &[String], width: f32) {
     let max = (width - 20.0) * 0.85;
     let job = wrapped(text, regular(12.5), t.chat_user_text, max);
     let galley = ui.painter().layout_job(job);
-    let (h, w) = (galley.size().y, galley.size().x.min(max));
-    let (row, _) = ui.allocate_exact_size(vec2(width - 20.0, h + 12.0), Sense::hover());
-    let pill = Rect::from_min_size(pos2(row.max.x - w - 16.0, row.min.y), vec2(w + 16.0, h + 12.0));
+    let (h, mut w) = (galley.size().y, galley.size().x.min(max));
+
+    let img_h = if !images.is_empty() { 68.0 } else { 0.0 };
+    if !images.is_empty() {
+        w = w.max(72.0);
+    }
+    let total_h = h + 12.0 + img_h;
+    let (row, _) = ui.allocate_exact_size(vec2(width - 20.0, total_h), Sense::hover());
+    let pill = Rect::from_min_size(pos2(row.max.x - w - 16.0, row.min.y), vec2(w + 16.0, total_h));
     ui.painter().rect_filled(pill, CornerRadius { nw: 9, ne: 9, sw: 9, se: 3 }, t.chat_user);
-    ui.painter().galley(pill.min + vec2(8.0, 6.0), galley, t.chat_user_text);
+
+    let mut content_top = pill.min.y + 6.0;
+    for img_url in images {
+        let img_box = Rect::from_min_size(pos2(pill.min.x + 8.0, content_top), vec2(58.0, 58.0));
+        ui.painter().rect_filled(img_box, CornerRadius::same(5), t.field);
+        ui.painter().rect_stroke(img_box, CornerRadius::same(5), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+        if let Some(tex) = decode_attachment_texture(ui.ctx(), img_url) {
+            ui.painter().image(tex.id(), img_box.shrink(2.0), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        } else {
+            icons::paint(ui.painter(), Rect::from_center_size(img_box.center(), Vec2::splat(20.0)), Icon::Image, t.text_secondary);
+        }
+        content_top += 62.0;
+    }
+
+    ui.painter().galley(pos2(pill.min.x + 8.0, content_top), galley, t.chat_user_text);
     ui.add_space(6.0);
 }
 
@@ -2790,7 +3256,7 @@ mod tests {
         assert_eq!(request.model, "gpt-5.6");
         assert_eq!(request.protocol, figcraft_ai::providers::Protocol::Openai);
         assert!(!request.tools.is_empty());
-        assert!(request.system.contains("FigCraft"));
+        assert!(request.system.contains("sycnUI"));
         assert_eq!(request.messages.len(), 1);
     }
 
@@ -2827,6 +3293,26 @@ mod tests {
         assert!(context.contains("Page:"), "{context}");
         assert!(!context.contains("one layer"), "{context}");
         assert!(context.contains("Nothing is selected."), "{context}");
+    }
+
+    #[test]
+    fn selection_mention_info_and_ask_ai_workflow() {
+        let mut u = chat_ui();
+        let out = u.app.session.execute("node.create", &json!({"type": "rectangle", "name": "Hero Card", "width": 120, "height": 60})).expect("a layer");
+        let id = out["id"].as_u64().expect("an id");
+        u.app.session.execute("select.set", &json!({"ids": [id]})).expect("selected");
+        let mention = selection_mention_info(&u.app).expect("selection mention info");
+        assert_eq!(mention.name, "Hero Card");
+        assert_eq!(mention.kind, "Rectangle");
+        assert_eq!(mention.id, id);
+        assert_eq!(mention.count, 1);
+
+        // Invoke askSelection
+        crate::menus::invoke(&mut u.app, "ai.chat.askSelection");
+        assert_eq!(u.app.ui.right_tab, crate::RightTab::Chat);
+        assert!(u.app.ui.chat.with_selection);
+        assert!(u.app.ui.chat.focus_draft);
+        assert!(u.app.ui.chat.draft.starts_with("@Hero Card "));
     }
 
     /// A run of tool calls says how many it was, in the singular for one, and says nothing for a
@@ -4602,5 +5088,49 @@ mod tests {
         if let Ok(png3) = u3.app.session.chat_render_png(&[], 1.0) {
             let _ = std::fs::write("/tmp/sycnui-test-shots/03_atmos_dashboard.png", png3);
         }
+    }
+
+    #[test]
+    fn provider_errors_are_rendered_clearly_and_stop_review_loop() {
+        let mut u = chat_ui();
+        u.app.run("node.create", json!({"type": "frame", "x": 0, "y": 0, "width": 393, "height": 204, "name": "Cover"})).expect("a frame");
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Event::Done(Err(TransportError::Other("Upstream request failed: Endpoint is unavailable.".into())))).expect("send");
+
+        u.app.ui.chat.streaming = Some(Streaming {
+            rx,
+            tx,
+            _thread: None,
+            step: 0,
+            text: String::new(),
+            tool_calls: Vec::new(),
+            results: Vec::new(),
+            mcp_dispatched: false,
+            provider: "test".into(),
+            model: "deepseek-v4.1-flash-free".into(),
+        });
+        u.app.session.chat.busy = true;
+
+        let ctx = egui::Context::default();
+        let finished = drain(&mut u.app, &ctx);
+        assert!(finished, "drain must finish immediately on error");
+        assert!(!u.app.session.chat.busy, "chat must no longer be busy");
+
+        assert_eq!(
+            u.app.ui.chat.failure.as_deref(),
+            Some("Upstream request failed: Endpoint is unavailable.")
+        );
+
+        let messages = u.app.session.chat_messages();
+        let last = messages.last().expect("last message");
+        assert!(
+            last.content.contains("❌ **Provider Error:** Upstream request failed: Endpoint is unavailable."),
+            "last message must contain provider error: {}",
+            last.content
+        );
+
+        assert_eq!(u.app.ui.chat.review_rounds, 0);
+        assert_eq!(u.app.ui.chat.empty_answers, 0);
     }
 }

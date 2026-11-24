@@ -105,6 +105,7 @@ pub fn rail(app: &mut FigApp, ui: &mut Ui) {
         (Icon::Assets, tr("Assets"), Some(LeftTab::Assets)),
         (Icon::Styles, tr("Variables"), None),
         (Icon::Shapes, "Icons", Some(LeftTab::Icons)),
+        (Icon::Panels, "Market", Some(LeftTab::Market)),
     ];
     for (icon, label, tab) in items {
         let ir = Rect::from_center_size(pos2(r.center().x, y + 18.0), vec2(40.0, 36.0));
@@ -156,6 +157,8 @@ pub fn left_panel(app: &mut FigApp, ui: &mut Ui) {
     let (head, _) = ui.allocate_exact_size(vec2(full.width(), 64.0), Sense::hover());
     if app.ui.left_tab == LeftTab::Assets {
         ui.painter().text(pos2(head.min.x + 16.0, head.min.y + 24.0), Align2::LEFT_CENTER, tr("Assets"), semibold(13.0), t.text);
+    } else if app.ui.left_tab == LeftTab::Market {
+        ui.painter().text(pos2(head.min.x + 16.0, head.min.y + 24.0), Align2::LEFT_CENTER, "Marketplace", semibold(13.0), t.text);
     } else {
         let name = app.session.doc().map(|d| d.name.clone()).unwrap_or_default();
         let nr = Rect::from_min_max(pos2(head.min.x + 14.0, head.min.y + 14.0), pos2(head.max.x - 48.0, head.min.y + 34.0));
@@ -184,6 +187,7 @@ pub fn left_panel(app: &mut FigApp, ui: &mut Ui) {
         }
         LeftTab::Assets => crate::assets_panel::show(app, ui),
         LeftTab::Icons => crate::panels::icons_panel::show(app, ui),
+        LeftTab::Market => crate::panels::market_panel::show(app, ui),
     }
 }
 

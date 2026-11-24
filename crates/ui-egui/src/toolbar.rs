@@ -586,8 +586,10 @@ fn flyout(app: &mut FigApp, ui: &mut Ui, g: &Group, bottom_left: egui::Pos2) {
     let t = Tokens::get(ui.ctx());
     let item_h = 32.0;
     let w = 220.0;
-    let h = item_h * g.tools.len() as f32 + 16.0;
+    let extra_items = if g.key == "shape" { 1 } else { 0 };
+    let h = item_h * (g.tools.len() + extra_items) as f32 + 16.0;
     let mut chosen = None;
+    let mut place_image_clicked = false;
     egui::Area::new(flyout_id(g.key)).fixed_pos(pos2(bottom_left.x, bottom_left.y - h)).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
         let (rect, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
         ui.painter().rect_filled(rect, CornerRadius::same(13), t.menu);
@@ -612,8 +614,26 @@ fn flyout(app: &mut FigApp, ui: &mut Ui, g: &Group, bottom_left: egui::Pos2) {
             }
             y += item_h;
         }
+
+        if g.key == "shape" {
+            let r = Rect::from_min_size(pos2(rect.min.x + 8.0, y), vec2(w - 16.0, item_h));
+            let resp = ui.interact(r, ui.scope_id().with(("fly", "place_image")), Sense::click());
+            if resp.hovered() || resp.has_focus() {
+                ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
+            }
+            icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 32.0, r.center().y), vec2(16.0, 16.0)), Icon::Image, t.menu_text);
+            ui.painter().text(pos2(r.min.x + 48.0, r.center().y), Align2::LEFT_CENTER, &*crate::i18n::command("file.placeImage", "Place image…"), regular(12.0), t.menu_text);
+            ui.painter().text(pos2(r.max.x - 8.0, r.center().y), Align2::RIGHT_CENTER, pretty_shortcut("Shift+Cmd+K"), regular(12.0), t.menu_dim);
+            if resp.clicked() {
+                place_image_clicked = true;
+            }
+        }
     });
     if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        app.ui.tool_flyout = None;
+    }
+    if place_image_clicked {
+        app.import_dialog(true);
         app.ui.tool_flyout = None;
     }
     if let Some(tid) = chosen {

@@ -4,21 +4,24 @@
  */
 
 import React, { useState } from 'react';
-import { Home, Layers, Component, Sliders, Shapes, ChevronRight } from 'lucide-react';
+import { Home, Layers, Component, Sliders, Shapes, ShoppingBag, ChevronRight } from 'lucide-react';
 import { IconsPanel } from './IconsPanel';
+import { MarketPanel } from './MarketPanel';
 
-export type LeftNavTab = 'home' | 'file' | 'assets' | 'variables' | 'icons';
+export type LeftNavTab = 'home' | 'file' | 'assets' | 'variables' | 'icons' | 'market';
 
 export interface SidebarProps {
   initialTab?: LeftNavTab;
   onTabChange?: (tab: LeftNavTab) => void;
   onIconInserted?: (nodeId: string, iconId: string) => void;
+  onComponentInserted?: (nodeId: string, componentId: string) => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
   initialTab = 'file',
   onTabChange,
   onIconInserted,
+  onComponentInserted,
 }) => {
   const [activeTab, setActiveTab] = useState<LeftNavTab>(initialTab);
   const [isPanelOpen, setIsPanelOpen] = useState(true);
@@ -39,8 +42,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'file' as LeftNavTab, label: 'File', icon: Layers },
     { id: 'assets' as LeftNavTab, label: 'Assets', icon: Component },
     { id: 'variables' as LeftNavTab, label: 'Variables', icon: Sliders },
-    // Exact requested position: "Icons" tab below "Variables" using Shapes icon
     { id: 'icons' as LeftNavTab, label: 'Icons', icon: Shapes },
+    // In-app Component Marketplace Tab (Shadcn Ecosystem)
+    { id: 'market' as LeftNavTab, label: 'Market', icon: ShoppingBag },
   ];
 
   return (
@@ -92,6 +96,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* 2. Secondary Adjacent Panel */}
       {isPanelOpen && (
         <div className="h-full flex-shrink-0 animate-in slide-in-from-left-2 duration-150">
+          {activeTab === 'market' && (
+            <MarketPanel
+              isOpen={isPanelOpen}
+              onClose={() => setIsPanelOpen(false)}
+              onComponentInserted={onComponentInserted}
+            />
+          )}
+
           {activeTab === 'icons' && (
             <IconsPanel
               isOpen={isPanelOpen}

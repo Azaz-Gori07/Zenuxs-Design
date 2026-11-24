@@ -66,6 +66,45 @@ pub fn transport() -> Box<dyn Transport> {
     Box::new(HttpTransport)
 }
 
+/// Fetch text from a remote URL on desktop.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn fetch_text(url: &str) -> Result<String, String> {
+    figcraft_ai::validate_remote_url(url).map_err(|e| e.to_string())?;
+    let agent = ureq::Agent::new_with_config(
+        ureq::config::Config::builder()
+            .http_status_as_error(false)
+            .timeout_global(Some(std::time::Duration::from_secs(10)))
+            .build(),
+    );
+    let resp = agent.get(url).header("user-agent", figcraft_ai::USER_AGENT).call().map_err(|e| e.to_string())?;
+    let status = resp.status().as_u16();
+    if !(200..300).contains(&status) {
+        return Err(format!("HTTP {status}"));
+    }
+    use std::io::Read as _;
+    let mut s = String::new();
+    resp.into_body().into_reader().take(1024 * 1024).read_to_string(&mut s).map_err(|e| e.to_string())?;
+    Ok(s)
+}
+
+/// Fetch text from a remote URL in the browser.
+#[cfg(target_arch = "wasm32")]
+pub async fn fetch_text_async(url: &str) -> Result<String, String> {
+    figcraft_ai::validate_remote_url(url).map_err(|e| e.to_string())?;
+    let window = web_sys::window().ok_or_else(|| "no browser window available".to_string())?;
+    let init = web_sys::RequestInit::new();
+    init.set_method("GET");
+    let req = web_sys::Request::new_with_str_and_init(url, &init).map_err(|_| "failed to build request".to_string())?;
+    let resp_value = wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&req)).await.map_err(|_| "fetch failed".to_string())?;
+    let resp: web_sys::Response = wasm_bindgen::JsCast::dyn_into(resp_value).map_err(|_| "not a valid response".to_string())?;
+    let status = resp.status();
+    if !(200..300).contains(&status) {
+        return Err(format!("HTTP {status}"));
+    }
+    let text_val = wasm_bindgen_futures::JsFuture::from(resp.text().map_err(|_| "cannot read response text".to_string())?).await.map_err(|_| "reading text failed".to_string())?;
+    text_val.as_string().ok_or_else(|| "response is not valid text".to_string())
+}
+
 /// Where one provider's request goes, and who it is.
 pub struct Endpoint {
     /// The base URL (`https://api.openai.com/v1`).
@@ -229,6 +268,30 @@ fn read_stream(reader: impl std::io::Read, protocol: Protocol, on_chunk: &mut dy
     parse_events(protocol, &data, &events, on_chunk)
 }
 
+/// Extract an error message from a provider response payload, if present.
+fn extract_error_detail(text: &str) -> Option<String> {
+    let json_candidate = if let Some(idx) = text.find('{') {
+        &text[idx..]
+    } else {
+        text
+    };
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_candidate) {
+        if let Some(msg) = v.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
+            let trimmed = msg.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+        if let Some(msg) = v.get("message").and_then(|m| m.as_str()) {
+            let trimmed = msg.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// What a provider's failure means, from its status and its words.
 ///
 /// The chat shows a different sentence for a bad key than for a full rate limit, so the kinds
@@ -236,6 +299,14 @@ fn read_stream(reader: impl std::io::Read, protocol: Protocol, on_chunk: &mut dy
 pub fn transport_error(text: &str) -> TransportError {
     let lower = text.to_lowercase();
     let status = lower.split(' ').next().and_then(|s| s.parse::<u16>().ok());
+
+    if let Some(detail) = extract_error_detail(text) {
+        if let Some(s) = status {
+            return TransportError::Other(format!("Provider Error ({s}): {detail}"));
+        }
+        return TransportError::Other(format!("Provider Error: {detail}"));
+    }
+
     match status {
         Some(401) | Some(403) => return TransportError::Authentication,
         Some(404) => return TransportError::ModelNotFound,
@@ -334,6 +405,13 @@ mod tests {
         let e = transport_error("500 who knows");
         assert!(matches!(e, TransportError::BadResponse(_)));
         assert_eq!(e.message(), "The provider's answer could not be read: 500 who knows");
+    }
+
+    #[test]
+    fn json_error_payload_retains_provider_details() {
+        let e = transport_error(r#"404 {"error":{"message":"Upstream request failed: Endpoint is unavailable.","type":"server_error","code":404}}"#);
+        assert!(matches!(e, TransportError::Other(_)));
+        assert_eq!(e.message(), "Provider Error (404): Upstream request failed: Endpoint is unavailable.");
     }
 
     #[test]

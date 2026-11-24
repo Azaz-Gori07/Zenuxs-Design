@@ -331,6 +331,9 @@ impl FigApp {
                 self.ui.chat.failure = Some(e);
             }
         }
+        if self.ui.chat.streaming.is_some() && self.ui.right_tab != crate::RightTab::Chat {
+            let _ = crate::chat::drain(self, ctx);
+        }
         // Pending cloud uploads: take the next due job, and collect the one in flight.
         if crate::cloud_sync::drain(self) {
             ctx.request_repaint();

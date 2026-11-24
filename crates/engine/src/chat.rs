@@ -255,6 +255,9 @@ pub fn message_json(message: &ChatMessage) -> Value {
     if let Some(id) = &message.tool_call_id {
         out["toolCallId"] = json!(id);
     }
+    if !message.images.is_empty() {
+        out["images"] = json!(message.images);
+    }
     out
 }
 
@@ -276,13 +279,18 @@ pub fn message_of(cmd: &str, value: &Value) -> Result<ChatMessage> {
                 .collect()
         })
         .unwrap_or_default();
+    let images: Vec<String> = value
+        .get("images")
+        .and_then(Value::as_array)
+        .map(|list| list.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .unwrap_or_default();
     let role = match role {
         "user" => figcraft_ai::transport::Role::User,
         "assistant" => figcraft_ai::transport::Role::Assistant,
         "tool" => figcraft_ai::transport::Role::Tool,
         other => return Err(bad(cmd, format!("\"{other}\" is not a message role"))),
     };
-    Ok(ChatMessage { role, content, tool_call_id, tool_calls })
+    Ok(ChatMessage { role, content, tool_call_id, tool_calls, images })
 }
 
 /// Run the command `tool` with `arguments` on the session, as the AI's tools do.
@@ -333,6 +341,7 @@ mod tests {
                 content: "x".into(),
                 tool_call_id: None,
                 tool_calls: vec![ToolCall { id: "c".into(), name: "n".into(), arguments: json!({}) }],
+                images: Vec::new(),
             })
             .expect_err("a user message with tool calls is refused");
         assert!(err.to_string().contains("tool calls"), "{err}");
@@ -369,6 +378,11 @@ mod tests {
         let json = message_json(&original);
         let back = message_of("test", &json).expect("the message reads back");
         assert_eq!(back, original);
+
+        let with_img = ChatMessage::user_with_images("look", vec!["data:image/png;base64,xyz".into()]);
+        let json_img = message_json(&with_img);
+        let back_img = message_of("test", &json_img).expect("the message with images reads back");
+        assert_eq!(back_img, with_img);
     }
 
     #[test]
