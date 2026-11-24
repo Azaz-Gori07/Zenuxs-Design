@@ -59,8 +59,18 @@ async function instantiateNode(
 
   // Clone props and adapt theme / custom options
   const props = { ...(descriptor.props || {}) };
-  if (options?.accentColor && props.fills) {
-    // If fills contain accent or brand colors, adapt optionally
+  if (Array.isArray(props.effects)) {
+    props.effects = props.effects.map((eff: any) => {
+      const effectType = String(eff.type || 'dropShadow').replace(/[-_]/g, '');
+      const normalizedType = effectType.toLowerCase() === 'dropshadow' ? 'dropShadow' : eff.type;
+      return {
+        ...eff,
+        type: normalizedType,
+        offset: eff.offset || [0, 4],
+        radius: eff.radius !== undefined ? eff.radius : 12,
+        spread: eff.spread !== undefined ? eff.spread : 0,
+      };
+    });
   }
 
   let characters = descriptor.characters;

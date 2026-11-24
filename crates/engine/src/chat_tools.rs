@@ -799,17 +799,21 @@ fn add_child_ellipse(
 
 fn build_button_children(s: &mut crate::Session, r_id: &Value, comp_id: &str, get_text: &dyn Fn(&str, &str) -> String) {
     if comp_id == "@originui/button-shimmer" || comp_id.contains("shimmer") {
-        let label = get_text("Label", "✨ Explore Features");
+        let _ = add_child_text(s, r_id, "Icon", "✦", 13.0, 700, "#60a5fa");
+        let label = get_text("Label", "Explore Features");
         let _ = add_child_text(s, r_id, "Label", &label, 14.0, 600, "#93c5fd");
     } else if comp_id == "@neobrutalism/neo-button" || comp_id.contains("neo") {
-        let label = get_text("Label", "Neo Action ⚡");
-        let _ = add_child_text(s, r_id, "Label", &label, 14.0, 700, "#000000");
+        let _ = add_child_text(s, r_id, "Icon", "⚡", 13.0, 700, "#000000");
+        let label = get_text("Label", "NEO ACTION");
+        let _ = add_child_text(s, r_id, "Label", &label, 13.0, 800, "#000000");
     } else if comp_id == "@cult/glow-button" || comp_id.contains("glow") {
+        let _ = add_child_text(s, r_id, "Icon", "✨", 13.0, 700, "#f472b6");
         let label = get_text("Label", "Launch Mission →");
         let _ = add_child_text(s, r_id, "Label", &label, 14.0, 600, "#f472b6");
     } else {
-        let label = get_text("Label", "Get Started →");
+        let label = get_text("Label", "Get Started");
         let _ = add_child_text(s, r_id, "Label", &label, 14.0, 600, "#ffffff");
+        let _ = add_child_text(s, r_id, "Arrow", "→", 14.0, 600, "#a1a1aa");
     }
 }
 
@@ -911,12 +915,39 @@ fn build_card_children(s: &mut crate::Session, r_id: &Value, comp_id: &str, get_
         let desc = get_text("Description", "Automatic layout engine that aligns and spaces design tokens with precision.");
         let _ = add_child_text(s, r_id, "Description", &desc, 12.0, 400, "#a3a3a3");
     } else {
-        let title = get_text("Title", "Total Revenue");
-        let value = get_text("Value", "$45,231.89");
-        let trend = get_text("Trend", "+20.1% from last month");
-        let _ = add_child_text(s, r_id, "Title", &title, 13.0, 500, "#64748b");
-        let _ = add_child_text(s, r_id, "Metric Value", &value, 26.0, 700, "#0f172a");
-        let _ = add_child_text(s, r_id, "Trend Subtitle", &trend, 12.0, 600, "#059669");
+        let hr = add_child_frame(s, r_id, "Header Row", 220.0, 28.0, json!({"layout": "horizontal", "itemSpacing": 8.0}));
+        if let Some(h) = hr.and_then(|v| v.get("id").cloned()) {
+            let icon_box = add_child_frame(
+                s,
+                &h,
+                "Icon Badge",
+                24.0,
+                24.0,
+                json!({"cornerRadius": 6.0, "fills": [{"type": "solid", "color": "#eff6ff"}], "strokes": [{"type": "solid", "color": "#dbeafe", "width": 1.0}]}),
+            );
+            if let Some(ib) = icon_box.and_then(|v| v.get("id").cloned()) {
+                let _ = add_child_text(s, &ib, "Icon", "$", 12.0, 700, "#2563eb");
+            }
+            let title = get_text("Title", "Total Revenue");
+            let _ = add_child_text(s, &h, "Title", &title, 13.0, 600, "#64748b");
+        }
+        let value = get_text("Value", "$48,250.00");
+        let _ = add_child_text(s, r_id, "Metric Value", &value, 28.0, 800, "#0f172a");
+        let tr = add_child_frame(s, r_id, "Trend Row", 220.0, 24.0, json!({"layout": "horizontal", "itemSpacing": 8.0}));
+        if let Some(t) = tr.and_then(|v| v.get("id").cloned()) {
+            let pill = add_child_frame(
+                s,
+                &t,
+                "Trend Pill",
+                68.0,
+                20.0,
+                json!({"cornerRadius": 10.0, "fills": [{"type": "solid", "color": "#dcfce7"}], "padding": [2.0, 6.0, 2.0, 6.0]}),
+            );
+            if let Some(p) = pill.and_then(|v| v.get("id").cloned()) {
+                let _ = add_child_text(s, &p, "Trend", "+18.4% ↑", 10.0, 700, "#15803d");
+            }
+            let _ = add_child_text(s, &t, "Period", "vs last month", 11.0, 400, "#94a3b8");
+        }
     }
 }
 
@@ -1033,41 +1064,248 @@ fn build_animation_children(s: &mut crate::Session, r_id: &Value, comp_id: &str,
     }
 }
 
-fn market_component_spec(comp_id: &str) -> (&'static str, f64, f64, Value, f64, Option<&'static str>, &'static str, f64, Value) {
-    if comp_id == "@shadcn/button" || (comp_id.contains("button") && !comp_id.contains("shimmer") && !comp_id.contains("neo") && !comp_id.contains("glow")) {
-        ("Button / Primary", 140.0, 40.0, json!([{"type": "solid", "color": "#18181b"}]), 8.0, None, "horizontal", 8.0, json!([10.0, 18.0, 10.0, 18.0]))
+struct MarketComponentSpec {
+    name: &'static str,
+    width: f64,
+    height: f64,
+    fills: Value,
+    corner_radius: f64,
+    stroke: Option<&'static str>,
+    layout_mode: &'static str,
+    item_spacing: f64,
+    padding: Value,
+    effects: Option<Value>,
+}
+
+fn market_component_spec(comp_id: &str) -> MarketComponentSpec {
+    if comp_id == "@shadcn/button"
+        || (comp_id.contains("button")
+            && !comp_id.contains("shimmer")
+            && !comp_id.contains("neo")
+            && !comp_id.contains("glow"))
+    {
+        MarketComponentSpec {
+            name: "Button / Primary",
+            width: 140.0,
+            height: 42.0,
+            fills: json!([{"type": "solid", "color": "#18181b"}]),
+            corner_radius: 8.0,
+            stroke: Some("#27272a"),
+            layout_mode: "horizontal",
+            item_spacing: 8.0,
+            padding: json!([10.0, 18.0, 10.0, 18.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#00000026", "offset": [0.0, 2.0], "radius": 4.0, "spread": 0.0}])),
+        }
     } else if comp_id == "@originui/button-shimmer" || comp_id.contains("shimmer") {
-        ("Button / Shimmer", 154.0, 42.0, json!([{"type": "solid", "color": "#090d16"}]), 10.0, Some("#3b82f6"), "horizontal", 8.0, json!([11.0, 20.0, 11.0, 20.0]))
+        MarketComponentSpec {
+            name: "Button / Shimmer",
+            width: 156.0,
+            height: 42.0,
+            fills: json!([{"type": "solid", "color": "#090d16"}]),
+            corner_radius: 999.0,
+            stroke: Some("#3b82f6"),
+            layout_mode: "horizontal",
+            item_spacing: 8.0,
+            padding: json!([11.0, 20.0, 11.0, 20.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#3b82f640", "offset": [0.0, 4.0], "radius": 12.0, "spread": 0.0}])),
+        }
     } else if comp_id == "@neobrutalism/neo-button" || comp_id.contains("neo") {
-        ("Button / Neobrutalism", 136.0, 42.0, json!([{"type": "solid", "color": "#fde047"}]), 6.0, Some("#000000"), "horizontal", 6.0, json!([10.0, 16.0, 10.0, 16.0]))
+        MarketComponentSpec {
+            name: "Button / Neobrutalism",
+            width: 140.0,
+            height: 44.0,
+            fills: json!([{"type": "solid", "color": "#fde047"}]),
+            corner_radius: 6.0,
+            stroke: Some("#000000"),
+            layout_mode: "horizontal",
+            item_spacing: 6.0,
+            padding: json!([10.0, 16.0, 10.0, 16.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#000000", "offset": [4.0, 4.0], "radius": 0.0, "spread": 0.0}])),
+        }
     } else if comp_id == "@cult/glow-button" || comp_id.contains("glow") {
-        ("Button / Cyber Glow", 160.0, 42.0, json!([{"type": "solid", "color": "#13041c"}]), 8.0, Some("#ec4899"), "horizontal", 8.0, json!([10.0, 20.0, 10.0, 20.0]))
-    } else if comp_id == "@shadcn/input" || (comp_id.contains("input") && !comp_id.contains("search") && !comp_id.contains("tag")) {
-        ("Input / Text Field", 240.0, 42.0, json!([{"type": "solid", "color": "#ffffff"}]), 6.0, Some("#cbd5e1"), "horizontal", 8.0, json!([10.0, 14.0, 10.0, 14.0]))
+        MarketComponentSpec {
+            name: "Button / Cyber Glow",
+            width: 164.0,
+            height: 44.0,
+            fills: json!([{"type": "solid", "color": "#13041c"}]),
+            corner_radius: 10.0,
+            stroke: Some("#ec4899"),
+            layout_mode: "horizontal",
+            item_spacing: 8.0,
+            padding: json!([11.0, 20.0, 11.0, 20.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#ec489980", "offset": [0.0, 0.0], "radius": 18.0, "spread": 2.0}])),
+        }
+    } else if comp_id == "@shadcn/input"
+        || (comp_id.contains("input") && !comp_id.contains("search") && !comp_id.contains("tag"))
+    {
+        MarketComponentSpec {
+            name: "Input / Text Field",
+            width: 240.0,
+            height: 42.0,
+            fills: json!([{"type": "solid", "color": "#ffffff"}]),
+            corner_radius: 8.0,
+            stroke: Some("#cbd5e1"),
+            layout_mode: "horizontal",
+            item_spacing: 8.0,
+            padding: json!([10.0, 14.0, 10.0, 14.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#00000008", "offset": [0.0, 1.0], "radius": 2.0, "spread": 0.0}])),
+        }
     } else if comp_id == "@originui/input-search-kbd" || comp_id.contains("search") {
-        ("Input / Search with ⌘K", 280.0, 44.0, json!([{"type": "solid", "color": "#ffffff"}]), 8.0, Some("#e2e8f0"), "horizontal", 10.0, json!([10.0, 14.0, 10.0, 14.0]))
+        MarketComponentSpec {
+            name: "Input / Search with ⌘K",
+            width: 280.0,
+            height: 44.0,
+            fills: json!([{"type": "solid", "color": "#ffffff"}]),
+            corner_radius: 8.0,
+            stroke: Some("#e2e8f0"),
+            layout_mode: "horizontal",
+            item_spacing: 10.0,
+            padding: json!([10.0, 14.0, 10.0, 14.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#0000000c", "offset": [0.0, 2.0], "radius": 4.0, "spread": 0.0}])),
+        }
     } else if comp_id == "@kibo/tags-input" || comp_id.contains("tag") {
-        ("Input / Tag Chips", 280.0, 48.0, json!([{"type": "solid", "color": "#ffffff"}]), 8.0, Some("#e2e8f0"), "horizontal", 8.0, json!([8.0, 12.0, 8.0, 12.0]))
+        MarketComponentSpec {
+            name: "Input / Tag Chips",
+            width: 280.0,
+            height: 48.0,
+            fills: json!([{"type": "solid", "color": "#ffffff"}]),
+            corner_radius: 8.0,
+            stroke: Some("#e2e8f0"),
+            layout_mode: "horizontal",
+            item_spacing: 8.0,
+            padding: json!([8.0, 12.0, 8.0, 12.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#0000000c", "offset": [0.0, 2.0], "radius": 4.0, "spread": 0.0}])),
+        }
     } else if comp_id == "@shadcn/card-metric" || comp_id.contains("metric") {
-        ("Card / Metric KPI", 260.0, 130.0, json!([{"type": "solid", "color": "#ffffff"}]), 12.0, Some("#e2e8f0"), "vertical", 8.0, json!([18.0, 20.0, 18.0, 20.0]))
+        MarketComponentSpec {
+            name: "Card / Metric KPI",
+            width: 260.0,
+            height: 140.0,
+            fills: json!([{"type": "solid", "color": "#ffffff"}]),
+            corner_radius: 14.0,
+            stroke: Some("#e2e8f0"),
+            layout_mode: "vertical",
+            item_spacing: 10.0,
+            padding: json!([18.0, 20.0, 18.0, 20.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#00000012", "offset": [0.0, 6.0], "radius": 16.0, "spread": -2.0}])),
+        }
     } else if comp_id == "@originui/pricing-card" || comp_id.contains("pricing") {
-        ("Card / Pricing Highlight", 280.0, 310.0, json!([{"type": "solid", "color": "#ffffff"}]), 16.0, Some("#4f46e5"), "vertical", 12.0, json!([20.0, 20.0, 20.0, 20.0]))
+        MarketComponentSpec {
+            name: "Card / Pricing Highlight",
+            width: 280.0,
+            height: 320.0,
+            fills: json!([{"type": "solid", "color": "#ffffff"}]),
+            corner_radius: 16.0,
+            stroke: Some("#4f46e5"),
+            layout_mode: "vertical",
+            item_spacing: 12.0,
+            padding: json!([20.0, 20.0, 20.0, 20.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#4f46e522", "offset": [0.0, 10.0], "radius": 26.0, "spread": -4.0}])),
+        }
     } else if comp_id == "@cult/bento-card" || comp_id.contains("bento") {
-        ("Card / Bento Showcase", 280.0, 200.0, json!([{"type": "solid", "color": "#171717"}]), 16.0, Some("#2e2e2e"), "vertical", 12.0, json!([22.0, 22.0, 22.0, 22.0]))
+        MarketComponentSpec {
+            name: "Card / Bento Showcase",
+            width: 280.0,
+            height: 200.0,
+            fills: json!([{"type": "solid", "color": "#171717"}]),
+            corner_radius: 16.0,
+            stroke: Some("#2e2e2e"),
+            layout_mode: "vertical",
+            item_spacing: 12.0,
+            padding: json!([22.0, 22.0, 22.0, 22.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#00000060", "offset": [0.0, 12.0], "radius": 28.0, "spread": -4.0}])),
+        }
     } else if comp_id == "@shadcn/area-chart" || comp_id.contains("area") {
-        ("Chart / Revenue Area Curve", 320.0, 180.0, json!([{"type": "solid", "color": "#ffffff"}]), 12.0, Some("#e2e8f0"), "vertical", 12.0, json!([16.0, 20.0, 16.0, 20.0]))
+        MarketComponentSpec {
+            name: "Chart / Revenue Area Curve",
+            width: 320.0,
+            height: 190.0,
+            fills: json!([{"type": "solid", "color": "#ffffff"}]),
+            corner_radius: 14.0,
+            stroke: Some("#e2e8f0"),
+            layout_mode: "vertical",
+            item_spacing: 12.0,
+            padding: json!([16.0, 20.0, 16.0, 20.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#00000010", "offset": [0.0, 4.0], "radius": 12.0, "spread": -2.0}])),
+        }
     } else if comp_id == "@originui/donut-chart" || comp_id.contains("donut") {
-        ("Chart / Donut Distribution", 260.0, 130.0, json!([{"type": "solid", "color": "#ffffff"}]), 12.0, Some("#e2e8f0"), "horizontal", 14.0, json!([16.0, 20.0, 16.0, 20.0]))
+        MarketComponentSpec {
+            name: "Chart / Donut Distribution",
+            width: 260.0,
+            height: 140.0,
+            fills: json!([{"type": "solid", "color": "#ffffff"}]),
+            corner_radius: 14.0,
+            stroke: Some("#e2e8f0"),
+            layout_mode: "horizontal",
+            item_spacing: 14.0,
+            padding: json!([16.0, 20.0, 16.0, 20.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#00000010", "offset": [0.0, 4.0], "radius": 12.0, "spread": -2.0}])),
+        }
     } else if comp_id == "@kibo/kanban-board" || comp_id.contains("kanban") {
-        ("Kanban / Sprint Board", 480.0, 260.0, json!([{"type": "solid", "color": "#f8fafc"}]), 14.0, Some("#e2e8f0"), "horizontal", 16.0, json!([16.0, 16.0, 16.0, 16.0]))
+        MarketComponentSpec {
+            name: "Kanban / Sprint Board",
+            width: 480.0,
+            height: 270.0,
+            fills: json!([{"type": "solid", "color": "#f8fafc"}]),
+            corner_radius: 16.0,
+            stroke: Some("#e2e8f0"),
+            layout_mode: "horizontal",
+            item_spacing: 16.0,
+            padding: json!([16.0, 16.0, 16.0, 16.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#0000000e", "offset": [0.0, 8.0], "radius": 24.0, "spread": -4.0}])),
+        }
     } else if comp_id == "@bundui/data-table" || comp_id.contains("table") {
-        ("Table / Data Grid", 380.0, 160.0, json!([{"type": "solid", "color": "#ffffff"}]), 10.0, Some("#e2e8f0"), "vertical", 0.0, json!([0.0, 0.0, 0.0, 0.0]))
+        MarketComponentSpec {
+            name: "Table / Data Grid",
+            width: 380.0,
+            height: 170.0,
+            fills: json!([{"type": "solid", "color": "#ffffff"}]),
+            corner_radius: 12.0,
+            stroke: Some("#e2e8f0"),
+            layout_mode: "vertical",
+            item_spacing: 0.0,
+            padding: json!([0.0, 0.0, 0.0, 0.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#00000010", "offset": [0.0, 4.0], "radius": 14.0, "spread": -2.0}])),
+        }
     } else if comp_id == "@animate-ui/marquee-ticker" || comp_id.contains("marquee") {
-        ("Animation / Marquee Banner", 360.0, 44.0, json!([{"type": "solid", "color": "#171717"}]), 8.0, None, "horizontal", 18.0, json!([12.0, 18.0, 12.0, 18.0]))
+        MarketComponentSpec {
+            name: "Animation / Marquee Banner",
+            width: 360.0,
+            height: 46.0,
+            fills: json!([{"type": "solid", "color": "#171717"}]),
+            corner_radius: 10.0,
+            stroke: Some("#262626"),
+            layout_mode: "horizontal",
+            item_spacing: 18.0,
+            padding: json!([12.0, 18.0, 12.0, 18.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#00000040", "offset": [0.0, 4.0], "radius": 10.0, "spread": 0.0}])),
+        }
     } else if comp_id == "@animate-ui/spotlight-card" || comp_id.contains("spotlight") {
-        ("Animation / Spotlight Card", 260.0, 140.0, json!([{"type": "solid", "color": "#0f172a"}]), 14.0, Some("#334155"), "vertical", 10.0, json!([18.0, 18.0, 18.0, 18.0]))
+        MarketComponentSpec {
+            name: "Animation / Spotlight Card",
+            width: 260.0,
+            height: 150.0,
+            fills: json!([{"type": "solid", "color": "#0f172a"}]),
+            corner_radius: 16.0,
+            stroke: Some("#334155"),
+            layout_mode: "vertical",
+            item_spacing: 10.0,
+            padding: json!([18.0, 18.0, 18.0, 18.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#0284c728", "offset": [0.0, 8.0], "radius": 24.0, "spread": -2.0}])),
+        }
     } else {
-        ("Market / Component", 260.0, 140.0, json!([{"type": "solid", "color": "#ffffff"}]), 12.0, Some("#e2e8f0"), "vertical", 8.0, json!([16.0, 16.0, 16.0, 16.0]))
+        MarketComponentSpec {
+            name: "Market / Component",
+            width: 260.0,
+            height: 140.0,
+            fills: json!([{"type": "solid", "color": "#ffffff"}]),
+            corner_radius: 12.0,
+            stroke: Some("#e2e8f0"),
+            layout_mode: "vertical",
+            item_spacing: 8.0,
+            padding: json!([16.0, 16.0, 16.0, 16.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#00000010", "offset": [0.0, 4.0], "radius": 12.0, "spread": -2.0}])),
+        }
     }
 }
 
@@ -1088,29 +1326,33 @@ pub fn instantiate_market_component(
             .to_string()
     };
 
-    let (name, width, height, fills, corner_radius, stroke, layout_mode, item_spacing, padding) = market_component_spec(comp_id);
+    let spec = market_component_spec(comp_id);
 
     let mut frame_props = json!({
-        "layout": layout_mode,
-        "layoutMode": layout_mode,
-        "itemSpacing": item_spacing,
-        "padding": padding,
-        "cornerRadius": corner_radius,
-        "fills": fills,
+        "layout": spec.layout_mode,
+        "layoutMode": spec.layout_mode,
+        "itemSpacing": spec.item_spacing,
+        "padding": spec.padding,
+        "cornerRadius": spec.corner_radius,
+        "fills": spec.fills,
     });
 
-    if let Some(st) = stroke {
+    if let Some(st) = spec.stroke {
         let width = if comp_id.contains("neo") || comp_id.contains("pricing") { 2.0 } else { 1.5 };
         frame_props["strokes"] = json!([{"type": "solid", "color": st, "width": width}]);
     }
 
+    if let Some(eff) = spec.effects {
+        frame_props["effects"] = eff;
+    }
+
     let mut create_params = json!({
         "type": "frame",
-        "name": name,
+        "name": spec.name,
         "x": x,
         "y": y,
-        "width": width,
-        "height": height,
+        "width": spec.width,
+        "height": spec.height,
         "props": frame_props
     });
 
@@ -1145,11 +1387,11 @@ pub fn instantiate_market_component(
         "id": root_id,
         "component_id": comp_id,
         "status": "inserted",
-        "name": name,
+        "name": spec.name,
         "x": x,
         "y": y,
-        "width": width,
-        "height": height
+        "width": spec.width,
+        "height": spec.height
     }))
 }
 
@@ -1575,7 +1817,7 @@ mod tests {
         assert!(inserted.get("id").is_some());
         assert_eq!(inserted["component_id"], "@kibo/kanban-board");
 
-        // 3. Verify Button component has white text and child label
+        // 3. Verify Button component has white text, drop shadow effect, and child label
         let btn_inserted = add
             .run(
                 &mut s,
@@ -1591,12 +1833,48 @@ mod tests {
         let doc = s.doc().expect("doc");
         let btn_node = doc.node(btn_id).expect("btn node");
         assert_eq!(btn_node.name, "Button / Primary");
-        assert!(!btn_node.children.is_empty(), "button must have child text");
+        assert!(!btn_node.effects.is_empty(), "button must have drop shadow effects");
+        assert!(!btn_node.children.is_empty(), "button must have child elements");
         let child_text = doc.node(btn_node.children[0]).expect("child text node");
         if let figcraft_doc::NodeKind::Text(td) = &child_text.kind {
             assert_eq!(td.characters, "Checkout Now");
         } else {
             panic!("child node should be text");
         }
+
+        // 4. Verify Metric KPI Card has drop shadow, border stroke, and rich sub-components
+        let metric_inserted = add
+            .run(
+                &mut s,
+                &json!({
+                    "component_id": "@shadcn/card-metric",
+                    "position": {"x": 200, "y": 200},
+                    "custom_text": {"Title": "Monthly MRR", "Value": "$84,200.00"}
+                }),
+            )
+            .expect("metric insert runs");
+        let metric_id = crate::params::id_of(metric_inserted.get("id").expect("metric id")).expect("node id");
+        let metric_node = s.doc().expect("doc").node(metric_id).expect("metric node");
+        assert_eq!(metric_node.name, "Card / Metric KPI");
+        assert!(!metric_node.effects.is_empty(), "metric card must have drop shadow");
+        assert!(!metric_node.strokes.is_empty(), "metric card must have border stroke");
+        assert!(metric_node.children.len() >= 3, "metric card must have header, value, and trend children");
+
+        // 5. Verify Neo-Brutalist button has hard black stroke and shadow
+        let neo_inserted = add
+            .run(
+                &mut s,
+                &json!({
+                    "component_id": "@neobrutalism/neo-button",
+                    "position": {"x": 300, "y": 300}
+                }),
+            )
+            .expect("neo insert runs");
+        let neo_id = crate::params::id_of(neo_inserted.get("id").expect("neo id")).expect("node id");
+        let neo_node = s.doc().expect("doc").node(neo_id).expect("neo node");
+        assert_eq!(neo_node.name, "Button / Neobrutalism");
+        assert_eq!(neo_node.corners.radii[0], 6.0);
+        assert!(!neo_node.effects.is_empty(), "neo button must have hard shadow");
+        assert!(!neo_node.strokes.is_empty(), "neo button must have solid black stroke");
     }
 }
