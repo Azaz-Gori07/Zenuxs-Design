@@ -1526,6 +1526,31 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             let tool = figcraft_engine::chat_tools::table().iter().find(|t| t.name == name).ok_or_else(|| figcraft_engine::chat_tools::instead_of(name))?;
             tool.run(&mut app.session, &args)
         }
+        "ai.chat.send" => {
+            let message = p.get("message").and_then(Value::as_str).ok_or("`message` required")?;
+            if let Some(path) = p.get("image_path").and_then(Value::as_str)
+                && let Ok(bytes) = std::fs::read(path)
+            {
+                let name = std::path::Path::new(path)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "image.png".into());
+                crate::chat::attach_image_from_bytes(app, name, bytes);
+            }
+            app.ui.right_tab = crate::RightTab::Chat;
+            app.ui.chat.stick = true;
+            crate::chat::send(app, message).map(|_| json!({"ok": true}))
+        }
+        "ai.chat.messages" => {
+            let busy = app.session.chat.busy || app.ui.chat.streaming.is_some();
+            let failure = app.ui.chat.failure.clone();
+            let history = app.session.chat.messages.clone();
+            Ok(json!({
+                "busy": busy,
+                "failure": failure,
+                "messages": history
+            }))
+        }
         "engine.commands" => Ok(Value::Array(
             figcraft_engine::all_commands()
                 .iter()

@@ -2109,7 +2109,7 @@ fn chat_menu(app: &mut FigApp, anchor: &egui::Response, t: &Tokens) {
 }
 
 /// Attach an image from raw bytes to the composer draft.
-fn attach_image_from_bytes(app: &mut FigApp, name: String, bytes: Vec<u8>) {
+pub(crate) fn attach_image_from_bytes(app: &mut FigApp, name: String, bytes: Vec<u8>) {
     use base64::Engine as _;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
     let lower = name.to_lowercase();
