@@ -227,7 +227,8 @@ by running sycnUI's own commands. Be direct, use design terminology, and after f
 
 You are operating inside sycnUI's vector design canvas environment.
 - There is NO command line, terminal, bash, or operating system shell.
-- NEVER call `shell`, `bash`, `terminal`, `exec`, `cmd`, `sh`, or `pwd`.
+- NEVER call `shell`, `bash`, `terminal`, `exec`, `cmd`, `sh`, `pwd`, or run external scripts.
+- NEVER attempt to call shell or bash to \"research\", \"search internet\", or \"find files\". Use your design knowledge and canvas tools.
 - sycnUI does not have OS shell tools. You interact ONLY with the canvas using sycnUI's tools:
   * To inspect the document, pages, or layers: call `inspect_document` or `get_node`.
   * To find vector icons or avatars: call `search_icons` (e.g. query \"user\" or \"avatar\") and `add_icon_to_canvas`.
@@ -1026,7 +1027,7 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
             let answer = match figcraft_engine::chat_tools::table().iter().find(|t| t.name == call.name) {
                 Some(t) => t.run(&mut app.session, &call.arguments),
                 // A tool the model invented is an error it reads, naming the one that does the job.
-                None => Err(figcraft_engine::chat_tools::instead_of(&call.name)),
+                None => figcraft_engine::chat_tools::run_fallback(&mut app.session, &call.name, &call.arguments),
             };
             if let Ok(ref val) = answer
                 && let Some(id) = val.get("id").and_then(Value::as_i64)
@@ -2815,13 +2816,16 @@ fn transcript_body(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32) {
             call_names.insert(c.id.clone(), c.name.clone());
         }
     }
+    let mut pending_action = None;
     for (i, message) in messages.iter().enumerate() {
         match message.role {
             Role::User => {
                 if message.content == EMPTY_ANSWER_NUDGE || message.content.starts_with(AUDIT_NUDGE) {
                     continue;
                 }
-                user_message(ui, t, &message.content, &message.images, width);
+                if let Some(act) = user_message(ui, t, i, &message.content, &message.images, width) {
+                    pending_action = Some(act);
+                }
             }
             Role::Assistant => {
                 if message.content.starts_with("Design review pass ") {
@@ -2871,6 +2875,28 @@ fn transcript_body(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32) {
             }
         }
     }
+    if let Some(act) = pending_action {
+        match act {
+            PromptAction::Edit(prompt) => {
+                app.ui.chat.draft = prompt;
+                app.ui.chat.focus_draft = true;
+                app.toast(tr("Prompt loaded into composer for editing"));
+            }
+            PromptAction::Revert(idx, prompt) => {
+                app.session.chat.messages.truncate(idx);
+                app.session.chat.busy = false;
+                app.ui.chat.streaming = None;
+                app.ui.chat.resumable = false;
+                app.ui.chat.draft = prompt;
+                app.ui.chat.focus_draft = true;
+                app.toast(tr("Conversation reverted to this message"));
+            }
+            PromptAction::Copy(prompt) => {
+                ui.ctx().copy_text(prompt);
+                app.toast(tr("Prompt copied to clipboard"));
+            }
+        }
+    }
     // The reasoning, as the preference asks.
     reasoning_block(app, ui, t, width);
     let live = app.ui.chat.streaming.as_ref().map(|s| (s.text.clone(), s.tool_calls.is_empty()));
@@ -2908,10 +2934,35 @@ fn continue_button(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32) {
     }
 }
 
-/// A message from the person: the brand pill, right-aligned and no wider than 85 % of the panel.
-fn user_message(ui: &mut Ui, t: &Tokens, text: &str, images: &[String], width: f32) {
+/// Action triggered from prompt button controls under user chat bubbles.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PromptAction {
+    Edit(String),
+    Revert(usize, String),
+    Copy(String),
+}
+
+/// Extracts clean prompt text for display and editing, removing trailing skill metadata and leading badges.
+pub fn clean_user_prompt(text: &str) -> String {
+    let t = text.trim();
+    let clean = if let Some(pos) = t.find("\n\n[Design skills activated for this request]") { &t[..pos] } else { t };
+    if let Some(rest) = clean.strip_prefix("⚡ [") {
+        if let Some(end_bracket) = rest.find(']') {
+            let cmd = &rest[..end_bracket];
+            let after = rest[end_bracket + 1..].trim_start();
+            return format!("{cmd} {after}");
+        }
+    }
+    clean.trim().to_string()
+}
+
+/// A message from the person: the brand pill, right-aligned and no wider than 85 % of the panel,
+/// with Revert, Edit, and Copy actions directly below it.
+fn user_message(ui: &mut Ui, t: &Tokens, index: usize, text: &str, images: &[String], width: f32) -> Option<PromptAction> {
+    let clean = clean_user_prompt(text);
+    let display_text = if clean.is_empty() { text } else { &clean };
     let max = (width - 20.0) * 0.85;
-    let job = wrapped(text, regular(12.5), t.chat_user_text, max);
+    let job = wrapped(display_text, regular(12.5), t.chat_user_text, max);
     let galley = ui.painter().layout_job(job);
     let (h, mut w) = (galley.size().y, galley.size().x.min(max));
 
@@ -2938,7 +2989,71 @@ fn user_message(ui: &mut Ui, t: &Tokens, text: &str, images: &[String], width: f
     }
 
     ui.painter().galley(pos2(pill.min.x + 8.0, content_top), galley, t.chat_user_text);
+
+    // Action buttons row below user bubble: [↩ Revert] [✏ Edit] [📋 Copy]
+    let mut chosen_action = None;
+    let actions_h = 18.0;
+    let (actions_row, _) = ui.allocate_exact_size(vec2(width - 20.0, actions_h), Sense::hover());
+
+    let btn_gap = 6.0;
+    let mut right_cursor = actions_row.max.x;
+
+    // 1. Copy button
+    let copy_w = 20.0;
+    let copy_r = Rect::from_min_size(pos2(right_cursor - copy_w, actions_row.min.y), vec2(copy_w, actions_h));
+    let copy_id = egui::Id::unique(("prompt_copy", index));
+    let copy_resp = ui.interact(copy_r, copy_id, Sense::click()).tip(tr("Copy prompt"));
+    if copy_resp.hovered() {
+        ui.painter().rect_filled(copy_r, CornerRadius::same(3), t.panel);
+    }
+    icons::paint(
+        ui.painter(),
+        Rect::from_center_size(copy_r.center(), Vec2::splat(11.0)),
+        Icon::Copy,
+        if copy_resp.hovered() { t.text } else { t.text_tertiary },
+    );
+    if copy_resp.clicked() {
+        chosen_action = Some(PromptAction::Copy(display_text.to_string()));
+    }
+    right_cursor -= copy_w + btn_gap;
+
+    // 2. Edit button
+    let edit_label = tr("Edit");
+    let edit_text_w = ui.painter().layout_no_wrap(edit_label.to_string(), regular(10.5), t.text_secondary).size().x;
+    let edit_w = edit_text_w + 20.0;
+    let edit_r = Rect::from_min_size(pos2(right_cursor - edit_w, actions_row.min.y), vec2(edit_w, actions_h));
+    let edit_id = egui::Id::unique(("prompt_edit", index));
+    let edit_resp = ui.interact(edit_r, edit_id, Sense::click()).tip(tr("Edit prompt in composer"));
+    if edit_resp.hovered() {
+        ui.painter().rect_filled(edit_r, CornerRadius::same(3), t.panel);
+    }
+    let edit_col = if edit_resp.hovered() { t.text } else { t.text_secondary };
+    icons::paint(ui.painter(), Rect::from_min_size(pos2(edit_r.min.x + 3.0, edit_r.center().y - 5.5), Vec2::splat(11.0)), Icon::Pencil, edit_col);
+    ui.painter().text(pos2(edit_r.min.x + 16.0, edit_r.center().y), Align2::LEFT_CENTER, edit_label, regular(10.5), edit_col);
+    if edit_resp.clicked() {
+        chosen_action = Some(PromptAction::Edit(display_text.to_string()));
+    }
+    right_cursor -= edit_w + btn_gap;
+
+    // 3. Revert button
+    let revert_label = tr("Revert");
+    let revert_text_w = ui.painter().layout_no_wrap(revert_label.to_string(), regular(10.5), t.text_secondary).size().x;
+    let revert_w = revert_text_w + 20.0;
+    let revert_r = Rect::from_min_size(pos2(right_cursor - revert_w, actions_row.min.y), vec2(revert_w, actions_h));
+    let revert_id = egui::Id::unique(("prompt_revert", index));
+    let revert_resp = ui.interact(revert_r, revert_id, Sense::click()).tip(tr("Revert conversation to this message"));
+    if revert_resp.hovered() {
+        ui.painter().rect_filled(revert_r, CornerRadius::same(3), t.panel);
+    }
+    let revert_col = if revert_resp.hovered() { t.danger } else { t.text_secondary };
+    icons::paint(ui.painter(), Rect::from_min_size(pos2(revert_r.min.x + 3.0, revert_r.center().y - 5.5), Vec2::splat(11.0)), Icon::Undo, revert_col);
+    ui.painter().text(pos2(revert_r.min.x + 16.0, revert_r.center().y), Align2::LEFT_CENTER, revert_label, regular(10.5), revert_col);
+    if revert_resp.clicked() {
+        chosen_action = Some(PromptAction::Revert(index, display_text.to_string()));
+    }
+
     ui.add_space(6.0);
+    chosen_action
 }
 
 /// The model's answer: a quiet card the width of the panel, its text read as markdown.
@@ -2996,8 +3111,16 @@ fn tool_block(ui: &mut Ui, t: &Tokens, calls: &[(&str, &Value, bool, Option<&str
     let w = (width - 20.0).max(60.0);
     egui::Frame::NONE.fill(t.chat_tool).corner_radius(CornerRadius::same(6)).inner_margin(egui::Margin::symmetric(8, 5)).show(ui, |ui| {
         ui.set_max_width(w);
-        for (name, arguments, answered, failure) in calls {
-            tool_row(ui, t, name, arguments, *answered, *failure, w - 16.0);
+        let mut i = 0;
+        while i < calls.len() {
+            let (name, arguments, answered, failure) = calls[i];
+            let mut repeat_count = 1;
+            while i + 1 < calls.len() && calls[i + 1].0 == name && calls[i + 1].2 == answered && calls[i + 1].3 == failure {
+                repeat_count += 1;
+                i += 1;
+            }
+            tool_row(ui, t, name, arguments, answered, failure, repeat_count, w - 16.0);
+            i += 1;
         }
     });
     ui.add_space(6.0);
@@ -3028,6 +3151,10 @@ fn tool_detail(name: &str, a: &Value) -> String {
         "props_reference" => s("key").to_string(),
         "export" => s("format").to_string(),
         "run_command" => s("command").to_string(),
+        "shell" | "bash" | "exec" | "terminal" | "cmd" | "sh" => {
+            let cmd = a.get("command").or_else(|| a.get("cmd")).or_else(|| a.get("query")).and_then(Value::as_str).unwrap_or_default();
+            short(cmd)
+        }
         "get_node" | "select" => match a.get("ids").or_else(|| a.get("id")) {
             Some(Value::Array(v)) => format!("{} layers", v.len()),
             Some(Value::String(x)) => x.clone(),
@@ -3051,9 +3178,12 @@ fn reasoning_excerpt(app: &FigApp) -> String {
 }
 
 /// One tool call: what it is doing, and the reason when it did not work.
-fn tool_row(ui: &mut Ui, t: &Tokens, name: &str, arguments: &Value, answered: bool, failure: Option<&str>, width: f32) {
+fn tool_row(ui: &mut Ui, t: &Tokens, name: &str, arguments: &Value, answered: bool, failure: Option<&str>, repeat_count: usize, width: f32) {
     let detail = tool_detail(name, arguments);
-    let line = if detail.is_empty() { name.to_string() } else { format!("{name} · {detail}") };
+    let mut line = if detail.is_empty() { name.to_string() } else { format!("{name} · {detail}") };
+    if repeat_count > 1 {
+        line = format!("{line} (×{repeat_count})");
+    }
     let (icon, col) = match failure {
         Some(_) => (Icon::Close, t.danger),
         None if answered => (Icon::Check, t.accent_text),
@@ -5406,5 +5536,38 @@ mod tests {
 
         assert_eq!(u.app.ui.chat.review_rounds, 0);
         assert_eq!(u.app.ui.chat.empty_answers, 0);
+    }
+
+    #[test]
+    fn clean_user_prompt_strips_skills_metadata_and_formats_slash_command() {
+        let raw_with_skills = "build a login form\n\n[Design skills activated for this request]\n- shadcn: use shadcn";
+        assert_eq!(clean_user_prompt(raw_with_skills), "build a login form");
+
+        let raw_with_slash = "⚡ [/apple-design] build a clean settings view";
+        assert_eq!(clean_user_prompt(raw_with_slash), "/apple-design build a clean settings view");
+
+        let plain = "just a plain prompt";
+        assert_eq!(clean_user_prompt(plain), "just a plain prompt");
+    }
+
+    #[test]
+    fn prompt_revert_truncates_conversation_and_populates_draft() {
+        let mut u = chat_ui();
+        let _ = u.app.session.chat_append(ChatMessage::user("first prompt".to_string()));
+        let _ = u.app.session.chat_append(ChatMessage::assistant("first answer".to_string()));
+        let _ = u.app.session.chat_append(ChatMessage::user("second prompt".to_string()));
+        let _ = u.app.session.chat_append(ChatMessage::assistant("second answer".to_string()));
+        assert_eq!(u.app.session.chat_messages().len(), 4);
+
+        // Revert to message at index 2 (second prompt)
+        u.app.session.chat.messages.truncate(2);
+        u.app.ui.chat.draft = "second prompt".to_string();
+        u.app.ui.chat.focus_draft = true;
+
+        assert_eq!(u.app.session.chat_messages().len(), 2);
+        assert_eq!(u.app.session.chat_messages()[0].content, "first prompt");
+        assert_eq!(u.app.session.chat_messages()[1].content, "first answer");
+        assert_eq!(u.app.ui.chat.draft, "second prompt");
+        assert!(u.app.ui.chat.focus_draft);
     }
 }

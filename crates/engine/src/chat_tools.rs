@@ -41,7 +41,7 @@ pub fn instead_of(name: &str) -> String {
         || name == "system"
     {
         return format!(
-            "there is no tool called \"{name}\". sycnUI has NO operating system shell or terminal. You are in a canvas design environment. Use canvas tools: to find icons/avatars use `search_icons` & `add_icon_to_canvas`; to search components use `search_market_components`; to inspect canvas use `inspect_document` or `get_node`; to create shapes use `create_node` or `batch`."
+            "there is no tool called \"{name}\". sycnUI is a pure design app with no OS shell access; you cannot run terminal commands. Use canvas tools: to find icons/avatars use `search_icons` & `add_icon_to_canvas`; to search components use `search_market_components`; to inspect canvas use `inspect_document` or `get_node`; to create shapes use `create_node` or `batch`."
         );
     }
     // The image arm comes first: "get_image" and "find_photo" also read as lookups, and a model
@@ -84,6 +84,116 @@ pub fn instead_of(name: &str) -> String {
         "list_commands, which names every command; props_reference documents the node.set keys"
     };
     format!("there is no tool called \"{name}\". Use {right}.")
+}
+
+/// Handle a tool call that is not in the declared tool table, including hallucinated shell/terminal calls.
+pub fn run_fallback(s: &mut crate::Session, name: &str, arguments: &Value) -> Result<Value, String> {
+    let lower_name = name.to_ascii_lowercase();
+    if lower_name == "shell"
+        || lower_name == "bash"
+        || lower_name == "terminal"
+        || lower_name == "exec"
+        || lower_name == "cmd"
+        || lower_name == "sh"
+        || lower_name == "powershell"
+        || lower_name == "system"
+        || lower_name == "run_command_line"
+    {
+        let cmd_str = arguments
+            .get("command")
+            .or_else(|| arguments.get("cmd"))
+            .or_else(|| arguments.get("query"))
+            .or_else(|| arguments.get("script"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_lowercase();
+
+        // 1. If searching for avatars or icons:
+        if cmd_str.contains("avatar")
+            || cmd_str.contains("icon")
+            || cmd_str.contains("user")
+            || cmd_str.contains("profile")
+            || cmd_str.contains("logo")
+            || cmd_str.contains("symbol")
+            || cmd_str.contains("svg")
+        {
+            let query = if cmd_str.contains("avatar") || cmd_str.contains("profile") || cmd_str.contains("user") {
+                "user"
+            } else if cmd_str.contains("star") {
+                "star"
+            } else if cmd_str.contains("bell") {
+                "bell"
+            } else if cmd_str.contains("search") {
+                "magnifying-glass"
+            } else {
+                "user"
+            };
+            let icons = search_icons(&json!({"query": query}))?;
+            return Ok(json!({
+                "notice": "sycnUI has no OS shell/terminal. Automatically searched vector icons for you.",
+                "query": query,
+                "found_icons": icons,
+                "hint": "Use `add_icon_to_canvas` with {\"icon_id\": \"fa6-solid:user\", \"parent_frame_id\": ...} to place this icon directly on the canvas."
+            }));
+        }
+
+        // 2. If searching for prebuilt components (button, card, chart, navbar, form, etc.):
+        if cmd_str.contains("component")
+            || cmd_str.contains("button")
+            || cmd_str.contains("card")
+            || cmd_str.contains("table")
+            || cmd_str.contains("chart")
+            || cmd_str.contains("nav")
+            || cmd_str.contains("sidebar")
+            || cmd_str.contains("header")
+            || cmd_str.contains("form")
+            || cmd_str.contains("shadcn")
+        {
+            let query = if cmd_str.contains("button") {
+                "button"
+            } else if cmd_str.contains("card") {
+                "card"
+            } else if cmd_str.contains("chart") {
+                "chart"
+            } else if cmd_str.contains("table") {
+                "table"
+            } else if cmd_str.contains("nav") || cmd_str.contains("header") {
+                "navbar"
+            } else {
+                "dashboard"
+            };
+            let comps = search_market_components(&json!({"query": query}))?;
+            return Ok(json!({
+                "notice": "sycnUI has no OS shell/terminal. Automatically searched Market Registry prebuilt components for you.",
+                "query": query,
+                "found_components": comps,
+                "hint": "Use `add_market_component_to_canvas` with {\"component_id\": \"...\", \"parent_frame_id\": ...} to place on canvas."
+            }));
+        }
+
+        // 3. If inspecting or looking for pages/layers/files:
+        if cmd_str.contains("find")
+            || cmd_str.contains("ls")
+            || cmd_str.contains("grep")
+            || cmd_str.contains("tree")
+            || cmd_str.contains("cat")
+            || cmd_str.contains("inspect")
+            || cmd_str.contains("page")
+            || cmd_str.contains("layer")
+        {
+            let doc = inspect(s, &json!({}))?;
+            return Ok(json!({
+                "notice": "sycnUI has no OS shell/terminal. Automatically inspected the canvas document tree for you.",
+                "document": doc
+            }));
+        }
+
+        return Err(format!(
+            "there is no tool called \"{name}\". sycnUI is a pure design app with no OS shell access; you cannot run terminal commands. Use canvas tools: to find icons/avatars use `search_icons` & `add_icon_to_canvas`; to search components use `search_market_components`; to inspect canvas use `inspect_document` or `get_node`; to create shapes use `create_node` or `batch`."
+        ));
+    }
+
+    Err(instead_of(name))
 }
 
 /// The tool table itself.
@@ -2019,5 +2129,28 @@ mod tests {
         let group_added = instantiate_market_component(&mut s, "@shadcn/avatar-group", 50.0, 10.0, None, None).expect("instantiate avatar group");
         assert_eq!(group_added["status"], "inserted");
         assert_eq!(group_added["name"], "Avatar / Team Stack");
+    }
+
+    #[test]
+    fn shell_fallback_routing_works() {
+        let mut s = crate::Session::empty();
+        let _ = s.execute("file.new", &json!({}));
+
+        // 1. Shell searching for avatars or icons
+        let avatar_res = run_fallback(&mut s, "shell", &json!({"command": "find . -name '*avatar*'"})).expect("shell avatar fallback");
+        assert!(avatar_res["found_icons"].as_array().expect("icons array").iter().any(|v| v.as_str() == Some("fa6-solid:user")));
+        assert!(avatar_res["notice"].as_str().unwrap().contains("Automatically searched vector icons"));
+
+        // 2. Shell searching for components
+        let comp_res = run_fallback(&mut s, "bash", &json!({"command": "search button components"})).expect("bash button fallback");
+        assert!(comp_res["found_components"].as_array().expect("components array").iter().any(|v| v["id"] == "@shadcn/button"));
+
+        // 3. Shell searching for pages/layers/files
+        let doc_res = run_fallback(&mut s, "terminal", &json!({"command": "ls pages"})).expect("terminal ls fallback");
+        assert!(doc_res["notice"].as_str().unwrap().contains("Automatically inspected the canvas document tree"));
+
+        // 4. Generic shell call
+        let generic_err = run_fallback(&mut s, "shell", &json!({"command": "curl https://example.com"})).expect_err("generic shell fails gracefully");
+        assert!(generic_err.contains("sycnUI is a pure design app with no OS shell access"));
     }
 }
