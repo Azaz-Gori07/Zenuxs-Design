@@ -1518,6 +1518,7 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             // A programmatic `doc.switch` changes the presented file just like a tab click: the
             // capture generation must see it even though this path bypasses `FigApp::run`.
             app.observe_presentation();
+            crate::chat::sync_active_tab(app);
             r
         }
         "ai.tool" => {
@@ -1528,6 +1529,7 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             tool.run(&mut app.session, &args)
         }
         "ai.chat.send" => {
+            crate::chat::sync_active_tab(app);
             let message = p.get("message").and_then(Value::as_str).ok_or("`message` required")?;
             if let Some(path) = p.get("image_path").and_then(Value::as_str)
                 && let Ok(bytes) = std::fs::read(path)
@@ -1540,6 +1542,7 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             crate::chat::send(app, message).map(|_| json!({"ok": true}))
         }
         "ai.chat.draft" => {
+            crate::chat::sync_active_tab(app);
             if let Some(text) = p.get("text").and_then(Value::as_str) {
                 app.ui.chat.draft = text.to_string();
                 app.ui.right_tab = crate::RightTab::Chat;
@@ -1548,6 +1551,7 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             Ok(json!({"draft": app.ui.chat.draft}))
         }
         "ai.chat.messages" => {
+            crate::chat::sync_active_tab(app);
             let busy = app.session.chat.busy || app.ui.chat.streaming.is_some();
             let failure = app.ui.chat.failure.clone();
             let history = app.session.chat.messages.clone();

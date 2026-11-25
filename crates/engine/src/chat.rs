@@ -182,7 +182,7 @@ impl Session {
 }
 
 /// The conversation a session holds.
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ChatState {
     /// The messages, oldest first.
     pub messages: Vec<ChatMessage>,
@@ -202,6 +202,15 @@ pub struct ChatState {
 }
 
 impl ChatState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn append(&mut self, message: ChatMessage) {
+        self.messages.push(message);
+        self.trim();
+    }
+
     /// Keep the conversation bounded: whole user/assistant/tool groups go, never a tool answer
     /// without the call it answers.
     fn trim(&mut self) {

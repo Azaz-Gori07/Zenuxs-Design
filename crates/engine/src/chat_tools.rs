@@ -76,6 +76,8 @@ pub fn instead_of(name: &str) -> String {
         "create_node, whose `props` take any node.set key"
     } else if has(&["set", "update", "change", "edit", "move", "resize", "style", "property", "align"]) {
         "set_properties for properties, or run_command with the command id"
+    } else if has(&["delete", "remove", "clear", "destroy", "wipe", "clean"]) {
+        "clear_node_children (to wipe old children of a frame for redesign) or delete_node (to delete layers by ids)"
     } else if has(&["screen", "shot", "capture", "png", "render"]) {
         "screenshot (the document's pixels read back to you) or review_design (its faults graded)"
     } else if has(&["batch", "multi", "group"]) {
@@ -193,6 +195,15 @@ pub fn run_fallback(s: &mut crate::Session, name: &str, arguments: &Value) -> Re
         ));
     }
 
+    if lower_name == "clear_children" || lower_name == "clear_frame" || lower_name == "remove_children" {
+        return clear_node_children(s, arguments);
+    }
+    if lower_name == "delete_layer" || lower_name == "remove_layer" || lower_name == "remove_node" {
+        let ids = arguments.get("ids").or_else(|| arguments.get("id")).cloned().unwrap_or_else(|| json!([]));
+        let ids = if ids.is_array() { ids } else { json!([ids]) };
+        return s.execute_as(Some("AI"), "edit.delete", &json!({"ids": ids})).map_err(|e| e.to_string());
+    }
+
     Err(instead_of(name))
 }
 
@@ -263,6 +274,7 @@ impl ChatTool {
             (None, "inspect_document") => inspect(s, arguments),
             (None, "search_icons") => search_icons(arguments),
             (None, "add_icon_to_canvas") => add_icon_to_canvas(s, arguments),
+            (None, "clear_node_children") => clear_node_children(s, arguments),
             (None, "search_market_components") => search_market_components(arguments),
             (None, "add_market_component_to_canvas") => add_market_component_to_canvas(s, arguments),
             // `screenshot` and `review_design` render the document and hand the pixels to the
@@ -394,6 +406,21 @@ static TABLE: std::sync::LazyLock<Vec<ChatTool>> = std::sync::LazyLock::new(|| {
         },
         ChatTool { name: "undo", description: "Take the last change back.", schema: obj(json!({}), &[]), command: Some("edit.undo") },
         ChatTool { name: "redo", description: "Put the last undone change back.", schema: obj(json!({}), &[]), command: Some("edit.redo") },
+        ChatTool {
+            name: "delete_node",
+            description: "Delete one or more layers by id (e.g. `ids: [43, 44]`). Use this to delete old elements when redesigning a screen or component.",
+            schema: obj(json!({"ids": ids("The layer ids to delete")}), &["ids"]),
+            command: Some("edit.delete"),
+        },
+        ChatTool {
+            name: "clear_node_children",
+            description: "Remove all child layers from a parent frame/group (e.g. `id: 42`), leaving it empty and ready to be redesigned from scratch while preserving its position, dimensions, and parent hierarchy.",
+            schema: obj(
+                json!({"id": json!({"anyOf": [{"type": "integer"}, {"type": "string"}], "description": "The parent frame/group id whose children should be deleted"})}),
+                &["id"],
+            ),
+            command: None,
+        },
         ChatTool {
             name: "generate_image",
             description: "Make an original image and place it as a new layer. Use it for illustrations, backgrounds, textures and artwork a photo service would not have. Say \"no text\" in the prompt when the image must not contain lettering.",
@@ -642,12 +669,16 @@ fn search_icons(arguments: &Value) -> Result<Value, String> {
 
 /// Insert an icon as a vector node onto the canvas with context-aware placement.
 fn add_icon_to_canvas(s: &mut crate::Session, arguments: &Value) -> Result<Value, String> {
-    let icon_id = arguments.get("icon_id").and_then(Value::as_str).unwrap_or_default();
+    let icon_id =
+        arguments.get("icon_id").or_else(|| arguments.get("icon")).or_else(|| arguments.get("name")).and_then(Value::as_str).unwrap_or_default();
     if icon_id.is_empty() {
         return Err("`icon_id` is required".into());
     }
-    let parent =
-        arguments.get("parent_frame_id").and_then(|v| if let Some(i) = v.as_i64() { Some(i.to_string()) } else { v.as_str().map(str::to_string) });
+    let parent = arguments
+        .get("parent_frame_id")
+        .or_else(|| arguments.get("parent"))
+        .or_else(|| arguments.get("parent_id"))
+        .and_then(|v| if let Some(i) = v.as_i64() { Some(i.to_string()) } else { v.as_str().map(str::to_string) });
 
     let layout_pos = arguments.get("layout_position").and_then(Value::as_str).unwrap_or("center");
     let (mut x, mut y) = (20.0, 20.0);
@@ -714,6 +745,27 @@ fn add_icon_to_canvas(s: &mut crate::Session, arguments: &Value) -> Result<Value
         "status": "inserted",
         "x": x,
         "y": y
+    }))
+}
+
+/// Remove all child layers from a parent frame or group.
+fn clear_node_children(s: &mut crate::Session, arguments: &Value) -> Result<Value, String> {
+    let id_val = arguments.get("id").or_else(|| arguments.get("node_id")).or_else(|| arguments.get("parent_id")).ok_or("`id` is required")?;
+    let node_id = crate::params::id_of(id_val).ok_or("valid layer id required")?;
+    let children: Vec<u64> = {
+        let doc = s.doc().map_err(|e| e.to_string())?;
+        let node = doc.node(node_id).ok_or(format!("layer {} not found", node_id.0))?;
+        node.children.iter().map(|c| c.0).collect()
+    };
+    let count = children.len();
+    if !children.is_empty() {
+        let child_ids: Vec<Value> = children.into_iter().map(|c| json!(c)).collect();
+        s.execute_as(Some("AI"), "edit.delete", &json!({"ids": child_ids})).map_err(|e| e.to_string())?;
+    }
+    Ok(json!({
+        "status": "cleared",
+        "parent_id": node_id.0,
+        "cleared_children_count": count
     }))
 }
 
@@ -1624,13 +1676,22 @@ pub fn instantiate_market_component(
 
 /// Place a prebuilt Market component directly onto the canvas with customization.
 fn add_market_component_to_canvas(s: &mut crate::Session, arguments: &Value) -> Result<Value, String> {
-    let comp_id = arguments.get("component_id").and_then(Value::as_str).unwrap_or_default().trim();
+    let comp_id = arguments
+        .get("component_id")
+        .or_else(|| arguments.get("id"))
+        .or_else(|| arguments.get("name"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim();
     if comp_id.is_empty() {
         return Err("`component_id` is required".into());
     }
 
-    let parent =
-        arguments.get("parent_frame_id").and_then(|v| if let Some(i) = v.as_i64() { Some(i.to_string()) } else { v.as_str().map(str::to_string) });
+    let parent = arguments
+        .get("parent_frame_id")
+        .or_else(|| arguments.get("parent"))
+        .or_else(|| arguments.get("parent_id"))
+        .and_then(|v| if let Some(i) = v.as_i64() { Some(i.to_string()) } else { v.as_str().map(str::to_string) });
 
     let (mut x, mut y) = (160.0, 120.0);
     if let Some(pos) = arguments.get("position") {
@@ -2152,5 +2213,97 @@ mod tests {
         // 4. Generic shell call
         let generic_err = run_fallback(&mut s, "shell", &json!({"command": "curl https://example.com"})).expect_err("generic shell fails gracefully");
         assert!(generic_err.contains("sycnUI is a pure design app with no OS shell access"));
+    }
+
+    #[test]
+    fn clear_node_children_and_delete_node_works() {
+        let mut s = crate::Session::empty();
+        let _ = s.execute("file.new", &json!({}));
+
+        // 1. Create a parent frame
+        let frame_res = s
+            .execute(
+                "node.create",
+                &json!({
+                    "type": "frame",
+                    "name": "Hero Card",
+                    "width": 400.0,
+                    "height": 300.0
+                }),
+            )
+            .expect("create frame");
+        let frame_id = frame_res["id"].as_i64().expect("frame id");
+
+        // 2. Create 2 children inside the frame
+        let c1 = s
+            .execute(
+                "node.create",
+                &json!({
+                    "type": "rectangle",
+                    "name": "Old Child 1",
+                    "parent": frame_id,
+                    "width": 100.0,
+                    "height": 50.0
+                }),
+            )
+            .expect("child 1");
+        let c1_id = c1["id"].as_i64().expect("child 1 id");
+
+        let c2 = s
+            .execute(
+                "node.create",
+                &json!({
+                    "type": "rectangle",
+                    "name": "Old Child 2",
+                    "parent": frame_id,
+                    "width": 100.0,
+                    "height": 50.0
+                }),
+            )
+            .expect("child 2");
+        let c2_id = c2["id"].as_i64().expect("child 2 id");
+
+        // Verify children exist
+        {
+            let doc = s.doc().unwrap();
+            let parent_node = doc.node(figcraft_doc::NodeId(frame_id as u64)).unwrap();
+            assert_eq!(parent_node.children.len(), 2);
+            assert!(doc.node(figcraft_doc::NodeId(c1_id as u64)).is_some());
+            assert!(doc.node(figcraft_doc::NodeId(c2_id as u64)).is_some());
+        }
+
+        // 3. Clear node children
+        let clear_tool = table().iter().find(|t| t.name == "clear_node_children").expect("clear_node_children tool");
+        let clear_res = clear_tool.run(&mut s, &json!({"id": frame_id})).expect("clear children runs");
+        assert_eq!(clear_res["status"], "cleared");
+        assert_eq!(clear_res["cleared_children_count"], 2);
+
+        // Verify parent still exists but children are gone
+        {
+            let doc = s.doc().unwrap();
+            let parent_node = doc.node(figcraft_doc::NodeId(frame_id as u64)).unwrap();
+            assert_eq!(parent_node.children.len(), 0);
+            assert!(doc.node(figcraft_doc::NodeId(c1_id as u64)).is_none());
+            assert!(doc.node(figcraft_doc::NodeId(c2_id as u64)).is_none());
+        }
+
+        // 4. Test delete_node tool
+        let new_layer = s
+            .execute(
+                "node.create",
+                &json!({
+                    "type": "rectangle",
+                    "name": "Temp Layer",
+                    "width": 50.0,
+                    "height": 50.0
+                }),
+            )
+            .expect("temp layer");
+        let temp_id = new_layer["id"].as_i64().expect("temp id");
+
+        let del_tool = table().iter().find(|t| t.name == "delete_node").expect("delete_node tool");
+        let del_res = del_tool.run(&mut s, &json!({"ids": [temp_id]})).expect("delete_node runs");
+        assert!(del_res["deleted"].as_array().expect("deleted").iter().any(|v| v.as_i64() == Some(temp_id)));
+        assert!(s.doc().unwrap().node(figcraft_doc::NodeId(temp_id as u64)).is_none());
     }
 }

@@ -99,6 +99,28 @@ pub struct Panel {
     pub last_selected_id: Option<u64>,
     /// Active slash command skill instructions for the current turn, if any.
     pub active_turn_skill: Option<(String, String)>,
+    /// Active document UID whose chat state is currently loaded.
+    pub current_doc_uid: Option<u64>,
+    /// Saved tab chat sessions for background tabs, keyed by document UID.
+    pub tab_sessions: std::collections::HashMap<u64, TabChatSession>,
+    /// Background streaming tasks for other open tabs, keyed by document UID.
+    pub background_streamings: std::collections::HashMap<u64, Streaming>,
+}
+
+/// Saved state for a background tab's AI conversation and UI.
+#[derive(Clone, Debug)]
+pub struct TabChatSession {
+    pub chat_state: figcraft_engine::chat::ChatState,
+    pub draft: String,
+    pub attached_image: Option<ChatAttachment>,
+    pub failure: Option<String>,
+    pub reasoning: String,
+    pub resumable: bool,
+    pub empty_answers: usize,
+    pub review_rounds: usize,
+    pub tools_run_count: usize,
+    pub touched_node_ids: Vec<i64>,
+    pub active_turn_skill: Option<(String, String)>,
 }
 
 /// An image attached to the composer draft (pasted or selected).
@@ -134,6 +156,9 @@ impl Default for Panel {
             focus_draft: false,
             last_selected_id: None,
             active_turn_skill: None,
+            current_doc_uid: None,
+            tab_sessions: std::collections::HashMap::new(),
+            background_streamings: std::collections::HashMap::new(),
         }
     }
 }
@@ -159,6 +184,8 @@ pub struct Streaming {
     /// The provider and model, for the usage line.
     pub provider: String,
     pub model: String,
+    /// Target document UID where this AI generation was initiated.
+    pub doc_uid: u64,
 }
 
 /// What crosses from the worker thread to the interface.
@@ -251,11 +278,17 @@ When the user asks to recreate, vectorize, or generate a logo from an image (e.g
   * Draw each line or stroke using `create_node` with type \"rectangle\" or \"vector\" (e.g. width, height, cornerRadius) with fill `#000000` (black).
   * Do NOT search for files or try to use terminal image converters. Directly compose the geometry on the canvas.
 
-# Mentioned and target elements
+# Mentioned and target elements & Redesigning
 
-When the user prompt mentions an element or target layers are specified under SELECTED & MENTIONED TARGET LAYERS:
-- Directly target and modify those specific element(s) by their node id using `set_properties`, `create_node` (for children), `layout.set`, and `props.text`.
-- DO NOT recreate the element or hallucinate a new layer unless the user explicitly requests duplicating or replacing it.
+When the user prompt mentions an element (e.g. \"@Hero Card\", \"@Login Screen\", \"@Header\") or target layers are specified under SELECTED & MENTIONED TARGET LAYERS:
+- Directly target and modify those specific element(s) by their node id using canvas tools.
+- DO NOT recreate the outer container frame or hallucinate a new layer at random coordinates. Keep the parent container in its place.
+- If the user asks to REDESIGN, update, modernize, replace, or rework an existing element or container:
+  1. DO NOT just reply with text or advice: YOU MUST EXECUTE CANVAS TOOLS.
+  2. Call `clear_node_children` with `id: <target_id>` to wipe obsolete child layers while preserving the container frame's position and dimensions.
+  3. Call `set_properties` on `ids: [<target_id>]` if updating container background fill, border stroke, corner radius, padding, or auto layout.
+  4. Create fresh, high-quality modern children inside it by calling `add_market_component_to_canvas` or `create_node` passing `parent: <target_id>`.
+  5. Check your work with `get_node(id: <target_id>)` or `screenshot`.
 - Respect and preserve existing position, dimensions, parent hierarchy, and auto layout properties unless instructed to alter them.
 
 # Component Marketplace Priority (#1 Rule for Generating UI)
@@ -282,6 +315,8 @@ Everything the document takes is a command. Your tools are commands:
 - `inspect_document` — read the pages and the layer tree before changing anything, so your work builds on what is there.
 - `create_node` — create a layer. Its `props` take any `node.set` key, so a layer can arrive with its fill, corner radius and auto layout already set.
 - `set_properties` — change layers' fills, strokes, effects, corners, auto layout, text.
+- `clear_node_children` — remove all child layers from a parent frame/group (e.g. `id: 42`), leaving it empty and ready to be redesigned from scratch while preserving its position, dimensions, and parent hierarchy.
+- `delete_node` — delete one or more layers by id (e.g. `ids: [43, 44]`).
 - `get_node` — read one layer back. Check your work with it after each change.
 - `batch` — several commands as one undo step. Every group of changes that belongs together goes in one.
 - `run_command` — any command at all, by id.
@@ -454,11 +489,110 @@ fn current_standing(app: &FigApp) -> String {
     }
 }
 
+/// Keep the chat conversation and streaming state synchronized with the active document tab.
+///
+/// When the user switches document tabs (via tab bar click, shortcut, or document open):
+/// 1. The previous tab's conversation transcript, draft, and streaming are saved into `tab_sessions`
+///    and `background_streamings`.
+/// 2. The newly active tab's session is restored into `app.session.chat` and `app.ui.chat`.
+/// 3. If a background tab is actively generating via AI, its tools execute strictly on its own
+///    document (`bring_forward`), never corrupting or modifying the active tab.
+pub fn sync_active_tab(app: &mut FigApp) {
+    let current_uid = app.session.ds().ok().map(|d| d.uid);
+    if app.ui.chat.current_doc_uid == current_uid {
+        return;
+    }
+
+    // On initial startup when current_doc_uid is None, adopt current_uid without wiping current state
+    if app.ui.chat.current_doc_uid.is_none() {
+        app.ui.chat.current_doc_uid = current_uid;
+        return;
+    }
+
+    // 1. Save previous tab's state
+    if let Some(old_uid) = app.ui.chat.current_doc_uid {
+        if app.session.docs.iter().any(|d| d.uid == old_uid) {
+            let session = TabChatSession {
+                chat_state: app.session.chat.clone(),
+                draft: std::mem::take(&mut app.ui.chat.draft),
+                attached_image: app.ui.chat.attached_image.take(),
+                failure: app.ui.chat.failure.take(),
+                reasoning: std::mem::take(&mut app.ui.chat.reasoning),
+                resumable: app.ui.chat.resumable,
+                empty_answers: app.ui.chat.empty_answers,
+                review_rounds: app.ui.chat.review_rounds,
+                tools_run_count: app.ui.chat.tools_run_count,
+                touched_node_ids: std::mem::take(&mut app.ui.chat.touched_node_ids),
+                active_turn_skill: app.ui.chat.active_turn_skill.take(),
+            };
+            app.ui.chat.tab_sessions.insert(old_uid, session);
+            if let Some(s) = app.ui.chat.streaming.take() {
+                app.ui.chat.background_streamings.insert(old_uid, s);
+            }
+        } else {
+            app.ui.chat.tab_sessions.remove(&old_uid);
+            app.ui.chat.background_streamings.remove(&old_uid);
+            app.ui.chat.streaming = None;
+        }
+    }
+
+    // Clean up closed documents
+    let open_uids: std::collections::HashSet<u64> = app.session.docs.iter().map(|d| d.uid).collect();
+    app.ui.chat.tab_sessions.retain(|uid, _| open_uids.contains(uid));
+    app.ui.chat.background_streamings.retain(|uid, _| open_uids.contains(uid));
+
+    // 2. Restore new active tab's state
+    if let Some(new_uid) = current_uid {
+        if let Some(saved) = app.ui.chat.tab_sessions.remove(&new_uid) {
+            app.session.chat = saved.chat_state;
+            app.ui.chat.draft = saved.draft;
+            app.ui.chat.attached_image = saved.attached_image;
+            app.ui.chat.failure = saved.failure;
+            app.ui.chat.reasoning = saved.reasoning;
+            app.ui.chat.resumable = saved.resumable;
+            app.ui.chat.empty_answers = saved.empty_answers;
+            app.ui.chat.review_rounds = saved.review_rounds;
+            app.ui.chat.tools_run_count = saved.tools_run_count;
+            app.ui.chat.touched_node_ids = saved.touched_node_ids;
+            app.ui.chat.active_turn_skill = saved.active_turn_skill;
+        } else {
+            app.session.chat = figcraft_engine::chat::ChatState::new();
+            app.ui.chat.draft.clear();
+            app.ui.chat.attached_image = None;
+            app.ui.chat.failure = None;
+            app.ui.chat.reasoning.clear();
+            app.ui.chat.resumable = false;
+            app.ui.chat.empty_answers = 0;
+            app.ui.chat.review_rounds = 0;
+            app.ui.chat.tools_run_count = 0;
+            app.ui.chat.touched_node_ids.clear();
+            app.ui.chat.active_turn_skill = None;
+        }
+
+        if let Some(bg_stream) = app.ui.chat.background_streamings.remove(&new_uid) {
+            app.ui.chat.streaming = Some(bg_stream);
+        } else {
+            app.ui.chat.streaming = None;
+        }
+    } else {
+        app.session.chat = figcraft_engine::chat::ChatState::new();
+        app.ui.chat.draft.clear();
+        app.ui.chat.attached_image = None;
+        app.ui.chat.failure = None;
+        app.ui.chat.reasoning.clear();
+        app.ui.chat.resumable = false;
+        app.ui.chat.streaming = None;
+    }
+
+    app.ui.chat.current_doc_uid = current_uid;
+}
+
 /// Send what the person typed.
 ///
 /// The message goes into the conversation, the skills the router activates ride along on it, and
 /// the first request goes out. `Err` says what to fix in the settings.
 pub fn send(app: &mut FigApp, text: &str) -> Result<(), String> {
+    sync_active_tab(app);
     let text = text.trim().to_string();
     if text.is_empty() && app.ui.chat.attached_image.is_none() {
         return Ok(());
@@ -482,7 +616,7 @@ pub fn send(app: &mut FigApp, text: &str) -> Result<(), String> {
     app.ui.chat.touched_node_ids.clear();
 
     // The selection and the page, as the model reads them.
-    let selection = selection_context(app);
+    let selection = selection_context(app, &text);
 
     let user = if skills_block.is_empty() { display_text } else { format!("{display_text}{skills_block}") };
     let attached = app.ui.chat.attached_image.take();
@@ -513,6 +647,7 @@ fn skills_for(app: &FigApp, text: &str) -> String {
 /// the transcript and send the model two copies, so this only assembles the context and starts
 /// the request. It is called from the frame loop when `pending_send` is set.
 pub fn send_pending(app: &mut FigApp) -> Result<(), String> {
+    sync_active_tab(app);
     if app.ui.chat.streaming.is_some() {
         return Err(tr("A request is already out. Stop it first.").to_string());
     }
@@ -522,7 +657,9 @@ pub fn send_pending(app: &mut FigApp) -> Result<(), String> {
     // The control channel's send arrives as a plain user message, so the skills it activates are
     // worked out here: `send` does it before appending, and a send that skipped the router would
     // reach the model with no skill knowledge at all.
+    let mut current_text = String::new();
     if let Some(text) = app.session.chat_messages().last().map(|m| m.content.clone()) {
+        current_text = text.clone();
         let (display_text, slash_skill) = parse_slash_skill(app, &text);
         let has_slash = slash_skill.is_some();
         app.ui.chat.active_turn_skill = slash_skill;
@@ -541,7 +678,7 @@ pub fn send_pending(app: &mut FigApp) -> Result<(), String> {
             }
         }
     }
-    app.session.chat.context = selection_context(app);
+    app.session.chat.context = selection_context(app, &current_text);
     dispatch(app)
 }
 
@@ -629,23 +766,82 @@ fn mention_height(app: &FigApp) -> f32 {
 ///
 /// The composer's pointer control decides whether the selection rides along: a person who
 /// selected a layer only to look at it should not have it quoted to the model.
-fn selection_context(app: &mut FigApp) -> String {
+/// In addition, any layers mentioned via `@Name` or `@Id` in `prompt` are matched and resolved.
+fn selection_context(app: &mut FigApp, prompt: &str) -> String {
     let with_selection = app.ui.chat.with_selection;
     let Ok(ds) = app.session.ds() else { return String::new() };
     let page = ds.doc.node(ds.page).map(|n| n.name.clone()).unwrap_or_default();
     let page_id = ds.page.0;
-    if !with_selection || ds.selection.is_empty() {
+
+    let mut target_ids: Vec<figcraft_doc::NodeId> = Vec::new();
+
+    // 1. If with_selection is enabled, include current canvas selection
+    if with_selection {
+        for id in &ds.selection {
+            if ds.doc.node(*id).is_some() && !target_ids.contains(id) {
+                target_ids.push(*id);
+            }
+        }
+    }
+
+    // 2. Parse @mentions from prompt (e.g. "@Hero Card", "@Login", "@Header", "@42")
+    let prompt_lower = prompt.to_lowercase();
+    for word in prompt.split_whitespace() {
+        if let Some(mention) = word.strip_prefix('@') {
+            let mention_clean = mention.trim_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '_');
+            if mention_clean.is_empty() {
+                continue;
+            }
+            if let Ok(num) = mention_clean.parse::<u64>() {
+                let id = figcraft_doc::NodeId(num);
+                if ds.doc.node(id).is_some() && !target_ids.contains(&id) {
+                    target_ids.push(id);
+                    continue;
+                }
+            }
+            let mention_lower = mention_clean.to_lowercase();
+            for node in ds.doc.nodes() {
+                let id = node.id;
+                if id == ds.page {
+                    continue;
+                }
+                let name_lower = node.name.to_lowercase();
+                if name_lower == mention_lower || name_lower.contains(&mention_lower) {
+                    if !target_ids.contains(&id) {
+                        target_ids.push(id);
+                    }
+                }
+            }
+        }
+    }
+
+    // Also match full element names preceded by @ (e.g. "@Hero Card")
+    for node in ds.doc.nodes() {
+        let id = node.id;
+        if id == ds.page || node.name.trim().is_empty() {
+            continue;
+        }
+        let name_lower = node.name.to_lowercase();
+        if name_lower.len() >= 3 && prompt_lower.contains(&format!("@{}", name_lower)) {
+            if !target_ids.contains(&id) {
+                target_ids.push(id);
+            }
+        }
+    }
+
+    if target_ids.is_empty() {
         return format!("Page: {page} (id {page_id}). Nothing is selected.");
     }
-    let n = ds.selection.iter().filter(|id| ds.doc.node(**id).is_some()).count();
-    let first_id = ds.selection.first().map(|id| id.0).unwrap_or(0);
+
+    let n = target_ids.len();
+    let first_id = target_ids.first().map(|id| id.0).unwrap_or(0);
     let mut out = if n <= 1 {
-        format!("Page: {page} (id {page_id}). Selection: one layer, id {first_id}.\n")
+        format!("Page: {page} (id {page_id}). Target: one layer, id {first_id}.\n")
     } else {
-        format!("Page: {page} (id {page_id}). Selection: {n} layers, first id {first_id}.\n")
+        format!("Page: {page} (id {page_id}). Targets: {n} layers, first id {first_id}.\n")
     };
     out.push_str("SELECTED & MENTIONED TARGET LAYERS (Apply changes, styling, or text updates directly to these elements):\n");
-    for id in &ds.selection {
+    for id in &target_ids {
         if let Some(node) = ds.doc.node(*id) {
             let kind_str = match &node.kind {
                 figcraft_doc::NodeKind::Frame => "Frame",
@@ -665,7 +861,7 @@ fn selection_context(app: &mut FigApp) -> String {
             };
             if let Some(b) = ds.doc.bounds_of(&[*id]) {
                 out.push_str(&format!(
-                    "- Node #{} (\"{}\", {}): bounds [x: {:.1}, y: {:.1}, w: {:.1}, h: {:.1}]",
+                    "- Target Node #{} (\"{}\", {}): bounds [x: {:.1}, y: {:.1}, w: {:.1}, h: {:.1}]",
                     node.id.0,
                     node.name,
                     kind_str,
@@ -675,7 +871,10 @@ fn selection_context(app: &mut FigApp) -> String {
                     b.height()
                 ));
             } else {
-                out.push_str(&format!("- Node #{} (\"{}\", {}): size [w: {:.1}, h: {:.1}]", node.id.0, node.name, kind_str, node.width, node.height));
+                out.push_str(&format!(
+                    "- Target Node #{} (\"{}\", {}): size [w: {:.1}, h: {:.1}]",
+                    node.id.0, node.name, kind_str, node.width, node.height
+                ));
             }
             if let Some(text) = node.kind.text() {
                 out.push_str(&format!(", text: \"{}\"", text.characters));
@@ -684,9 +883,27 @@ fn selection_context(app: &mut FigApp) -> String {
                 out.push_str(&format!(", autoLayout: mode={:?} gap={:.1}", layout.mode, layout.gap));
             }
             if !node.children.is_empty() {
-                out.push_str(&format!(", childrenCount: {}", node.children.len()));
+                out.push_str(&format!(", existingChildrenCount: {}", node.children.len()));
+                let child_details: Vec<String> =
+                    node.children.iter().filter_map(|cid| ds.doc.node(*cid).map(|cn| format!("#{} \"{}\"", cid.0, cn.name))).take(8).collect();
+                out.push_str(&format!(" [children: {}]", child_details.join(", ")));
             }
             out.push('\n');
+
+            // If this is a container and prompt suggests redesign/update/replace:
+            if !node.children.is_empty()
+                || matches!(node.kind, figcraft_doc::NodeKind::Frame | figcraft_doc::NodeKind::Group | figcraft_doc::NodeKind::Section { .. })
+            {
+                out.push_str(&format!(
+                    "  --> TO REDESIGN CONTAINER #{id_num} (\"{name}\"):\n\
+                    1. Call `clear_node_children(id: {id_num})` to wipe out obsolete child elements while keeping the container frame at its position and size.\n\
+                    2. Call `set_properties(ids: [{id_num}], props: {{ ... }})` if you need to update its background fill, border stroke, corner radius, padding, or auto layout.\n\
+                    3. Populate modern content inside it using `create_node` or `add_market_component_to_canvas` passing `parent: {id_num}`.\n\
+                    DO NOT just reply with text; you MUST execute these tool calls on the canvas!\n",
+                    id_num = node.id.0,
+                    name = node.name
+                ));
+            }
         }
     }
     out
@@ -714,8 +931,8 @@ fn mcp_servers(app: &FigApp) -> Vec<McpServer> {
         .collect()
 }
 
-/// Build the request: the instructions, the conversation, the tools and the model's settings.
-fn build_request(app: &FigApp, standing: &str) -> Result<ChatRequest, String> {
+/// Build the request for a specific conversation state: the instructions, the conversation, the tools and the model's settings.
+fn build_request_from(app: &FigApp, chat: &figcraft_engine::chat::ChatState, standing: &str) -> Result<ChatRequest, String> {
     let (resolved, key) = app.session.chat_model(AIModelRole::Design).map_err(|e| e.to_string())?;
     let connection = &resolved.connection;
     let base_url = if connection.custom_base_url.trim().is_empty() {
@@ -728,9 +945,9 @@ fn build_request(app: &FigApp, standing: &str) -> Result<ChatRequest, String> {
         system.push_str("\n\n");
         system.push_str(standing);
     }
-    if !app.session.chat.context.is_empty() {
+    if !chat.context.is_empty() {
         system.push_str("\n\n# The document right now\n\n");
-        system.push_str(&app.session.chat.context);
+        system.push_str(&chat.context);
     }
     Ok(ChatRequest {
         model: figcraft_ai::models::AIModelSettings::effective_model_id(&resolved.profile).to_string(),
@@ -738,12 +955,17 @@ fn build_request(app: &FigApp, standing: &str) -> Result<ChatRequest, String> {
         api_key: key,
         protocol: connection.provider.protocol(),
         responses_api: connection.custom_api_type == figcraft_ai::models::APIType::Responses,
-        messages: app.session.chat_messages().to_vec(),
+        messages: chat.messages.clone(),
         system,
         tools: figcraft_engine::chat_tools::tools(),
         max_output_tokens: resolved.profile.max_output_tokens,
         reasoning_effort: resolved.profile.reasoning_effort.clone(),
     })
+}
+
+/// Build the request: the instructions, the conversation, the tools and the model's settings.
+fn build_request(app: &FigApp, standing: &str) -> Result<ChatRequest, String> {
+    build_request_from(app, &app.session.chat, standing)
 }
 
 /// Start one model step on its worker thread, or on the page's event loop.
@@ -760,6 +982,7 @@ fn start_step(app: &mut FigApp, request: ChatRequest, step: usize) -> Result<(),
     app.ui.chat.resumable = false;
     app.ui.chat.reasoning.clear();
     app.ui.chat.mcp_tools.clear();
+    let doc_uid = app.session.ds().map(|d| d.uid).unwrap_or(0);
     app.ui.chat.streaming = Some(Streaming {
         rx,
         tx,
@@ -771,6 +994,7 @@ fn start_step(app: &mut FigApp, request: ChatRequest, step: usize) -> Result<(),
         mcp_dispatched: false,
         provider,
         model,
+        doc_uid,
     });
     Ok(())
 }
@@ -860,11 +1084,189 @@ fn ask(
     }
 }
 
+/// Drain any background AI streaming tasks running on other open tabs.
+fn drain_background_streamings(app: &mut FigApp, ctx: &Context) -> bool {
+    if app.ui.chat.background_streamings.is_empty() {
+        return false;
+    }
+    let mut any_activity = false;
+    let mut finished_uids = Vec::new();
+    let mut to_continue: Vec<(u64, usize)> = Vec::new();
+
+    let bg_uids: Vec<u64> = app.ui.chat.background_streamings.keys().copied().collect();
+    for uid in bg_uids {
+        let Some(streaming) = app.ui.chat.background_streamings.get_mut(&uid) else { continue };
+        let mut finished = false;
+        while let Ok(event) = streaming.rx.try_recv() {
+            any_activity = true;
+            match event {
+                Event::Text(t) => streaming.text.push_str(&t),
+                Event::Reasoning(r) => {
+                    if let Some(session) = app.ui.chat.tab_sessions.get_mut(&uid) {
+                        session.reasoning.push_str(&r);
+                    }
+                }
+                Event::McpTools(_) => {}
+                Event::ToolResult(id, text) => {
+                    if let Some(call) = streaming.tool_calls.iter().find(|c| c.id == id) {
+                        streaming.results.push((call.clone(), cap_result(&call.name, text)));
+                    }
+                }
+                Event::Done(result) => {
+                    finished = true;
+                    match result {
+                        Ok(response) => {
+                            streaming.text = response.text.clone();
+                            streaming.tool_calls = response.tool_calls.clone();
+                        }
+                        Err(e) => {
+                            if let Some(session) = app.ui.chat.tab_sessions.get_mut(&uid) {
+                                session.failure = Some(e.message());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if finished {
+            let calls = streaming.tool_calls.clone();
+            if calls.is_empty() {
+                if let Some(session) = app.ui.chat.tab_sessions.get_mut(&uid) {
+                    session.chat_state.busy = false;
+                    if !streaming.text.trim().is_empty() {
+                        let _ = session.chat_state.append(ChatMessage::assistant(streaming.text.clone()));
+                    } else if session.tools_run_count > 0 || !session.touched_node_ids.is_empty() {
+                        let ops = session.tools_run_count;
+                        let layers = session.touched_node_ids.len().max(1);
+                        let summary = format!(
+                            "✨ **Design updated on canvas**\n\n\
+                            - Executed {} tool operations on canvas.\n\
+                            - Placed and styled {} design element(s).\n\n\
+                            *Status:* Complete.",
+                            ops, layers
+                        );
+                        let _ = session.chat_state.append(ChatMessage::assistant(summary));
+                    }
+                }
+                finished_uids.push(uid);
+            } else {
+                let forward = app.session.bring_forward(&json!(uid)).ok();
+                for call in &calls {
+                    let answer = match figcraft_engine::chat_tools::table().iter().find(|t| t.name == call.name) {
+                        Some(t) => t.run(&mut app.session, &call.arguments),
+                        None => figcraft_engine::chat_tools::run_fallback(&mut app.session, &call.name, &call.arguments),
+                    };
+                    if let Some(session) = app.ui.chat.tab_sessions.get_mut(&uid) {
+                        session.tools_run_count += 1;
+                        if let Ok(ref val) = answer
+                            && let Some(id) = val.get("id").and_then(Value::as_i64)
+                        {
+                            session.touched_node_ids.push(id);
+                        }
+                        if let Some(ids) = call.arguments.get("ids").and_then(Value::as_array) {
+                            for id in ids.iter().filter_map(figcraft_engine::params::id_of) {
+                                session.touched_node_ids.push(id.0 as i64);
+                            }
+                        }
+                        if let Some(id) = call.arguments.get("id").and_then(figcraft_engine::params::id_of) {
+                            session.touched_node_ids.push(id.0 as i64);
+                        }
+                    }
+                    streaming.results.push((call.clone(), cap_result(&call.name, tool_answer_text(&answer))));
+                }
+                if let Some(f) = forward {
+                    app.session.put_back(f);
+                }
+
+                if let Some(session) = app.ui.chat.tab_sessions.get_mut(&uid) {
+                    let _ = session.chat_state.append(ChatMessage::assistant_calls(streaming.text.clone(), calls.clone()));
+                    session.chat_state.pending_tool_calls = calls.clone();
+                    for (c, txt) in &streaming.results {
+                        let _ = session.chat_state.append(ChatMessage::tool_result(c.id.clone(), cap_answer(txt.clone())));
+                    }
+                }
+
+                if streaming.step + 1 < MAX_STEPS {
+                    to_continue.push((uid, streaming.step + 1));
+                } else {
+                    if let Some(session) = app.ui.chat.tab_sessions.get_mut(&uid) {
+                        session.chat_state.busy = false;
+                        session.resumable = true;
+                    }
+                    finished_uids.push(uid);
+                }
+            }
+        }
+    }
+
+    for uid in finished_uids {
+        app.ui.chat.background_streamings.remove(&uid);
+    }
+
+    for (uid, next_step) in to_continue {
+        let forward = app.session.bring_forward(&json!(uid)).ok();
+        let session_data = app.ui.chat.tab_sessions.get(&uid).map(|session| {
+            let standing = if let Some((_, content)) = &session.active_turn_skill { content.clone() } else { String::new() };
+            (session.chat_state.clone(), standing)
+        });
+
+        let started = if let Some((chat_state, standing)) = session_data {
+            if let Ok(req) = build_request_from(app, &chat_state, &standing) {
+                let (tx, rx) = channel();
+                let provider = req.base_url.clone();
+                let model = req.model.clone();
+                let servers = mcp_servers(app);
+                let transport = app.chat_transport.clone();
+                let mcp = app.mcp_factory.clone();
+                if let Ok(thread) = ask(&*transport, mcp, &servers, req, tx.clone()) {
+                    let new_streaming = Streaming {
+                        rx,
+                        tx,
+                        _thread: thread,
+                        text: String::new(),
+                        tool_calls: Vec::new(),
+                        results: Vec::new(),
+                        step: next_step,
+                        mcp_dispatched: false,
+                        provider,
+                        model,
+                        doc_uid: uid,
+                    };
+                    app.ui.chat.background_streamings.insert(uid, new_streaming);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if let Some(f) = forward {
+            app.session.put_back(f);
+        }
+        if !started {
+            if let Some(session) = app.ui.chat.tab_sessions.get_mut(&uid) {
+                session.chat_state.busy = false;
+            }
+            app.ui.chat.background_streamings.remove(&uid);
+        }
+    }
+
+    if any_activity {
+        ctx.request_repaint();
+    }
+    any_activity
+}
+
 /// Drain the request in progress, and run the tools when its answer asks for them.
 ///
 /// Called every frame while a request is out. `true` when the send is over.
 pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
     let mut finished = false;
+    let _bg_active = drain_background_streamings(app, ctx);
 
     if let Some(streaming) = &mut app.ui.chat.streaming {
         while let Ok(event) = streaming.rx.try_recv() {
@@ -1020,6 +1422,7 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
             return true;
         }
         // The engine's own tools, right here.
+        let forward = if streaming.doc_uid != 0 { app.session.bring_forward(&json!(streaming.doc_uid)).ok() } else { None };
         for call in &calls {
             if mcp_tool_of(&call.name).is_some() || figcraft_engine::chat_tools::is_media_tool(&call.name) {
                 continue;
@@ -1044,6 +1447,9 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
             }
             streaming.results.push((call.clone(), cap_result(&call.name, tool_answer_text(&answer))));
         }
+        if let Some(f) = forward {
+            app.session.put_back(f);
+        }
         // The networked tools — MCP calls and the image tools — run on their worker, in the
         // order the model asked for them.
         let networked: Vec<ToolCall> =
@@ -1054,6 +1460,7 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
             return false;
         }
         // Image-editing calls need the source layer's bytes, which only the session can read.
+        let forward_media = if streaming.doc_uid != 0 { app.session.bring_forward(&json!(streaming.doc_uid)).ok() } else { None };
         let mut networked = networked;
         for call in &mut networked {
             if (call.name == "vectorize_image" || call.name == "remove_background")
@@ -1081,6 +1488,9 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
                     Err(_) => call.arguments["imageData"] = Value::Null,
                 }
             }
+        }
+        if let Some(f) = forward_media {
+            app.session.put_back(f);
         }
         streaming.mcp_dispatched = true;
         let tx = streaming.tx.clone();
@@ -1898,8 +2308,13 @@ mod cap_tests {
 /// bytes never reach the model: the image is placed through the engine first, and what the
 /// model reads is what happened to it.
 fn finish_tools(app: &mut FigApp, streaming: &mut Streaming) {
+    let forward = if streaming.doc_uid != 0 { app.session.bring_forward(&json!(streaming.doc_uid)).ok() } else { None };
     record_tools(app, streaming);
-    if continue_step(app).is_err() {
+    let step_res = continue_step(app);
+    if let Some(f) = forward {
+        app.session.put_back(f);
+    }
+    if step_res.is_err() {
         app.session.chat.busy = false;
     }
 }
@@ -2040,6 +2455,7 @@ const HEADER_H: f32 = 50.0;
 /// does, and only the transcript between them scrolls — which is what keeps a long answer from
 /// pushing the field the person types into off the panel.
 pub fn panel(app: &mut FigApp, ui: &mut Ui) {
+    sync_active_tab(app);
     let ctx = ui.ctx().clone();
     if drain(app, &ctx) {
         // An answer that just finished: the transcript is where the person is looking.
@@ -2817,6 +3233,7 @@ fn transcript_body(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32) {
         }
     }
     let mut pending_action = None;
+    let mut claimed_tool_call_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (i, message) in messages.iter().enumerate() {
         match message.role {
             Role::User => {
@@ -2837,6 +3254,9 @@ fn transcript_body(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32) {
                 if show_tools && !message.tool_calls.is_empty() {
                     // The answers that follow this step's calls, in the order they were made.
                     let ids: Vec<&str> = message.tool_calls.iter().map(|c| c.id.as_str()).collect();
+                    for cid in &ids {
+                        claimed_tool_call_ids.insert(cid.to_string());
+                    }
                     let mut failures: Vec<Option<String>> = vec![None; ids.len()];
                     let mut answered: Vec<bool> = vec![false; ids.len()];
                     for later in messages.iter().skip(i + 1) {
@@ -2867,7 +3287,11 @@ fn transcript_body(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32) {
             }
             Role::Tool => {
                 // An answer nothing above claimed (a chat reloaded mid-step): still say it ran.
-                if show_tools && message.tool_calls.is_empty() {
+                let cid = message.tool_call_id.as_deref().unwrap_or_default();
+                if show_tools && (cid.is_empty() || !claimed_tool_call_ids.contains(cid)) {
+                    if !cid.is_empty() {
+                        claimed_tool_call_ids.insert(cid.to_string());
+                    }
                     let name = message.tool_call_id.as_ref().and_then(|id| call_names.get(id)).map(String::as_str).unwrap_or("tool");
                     let failure = tool_failure(&message.content);
                     tool_block(ui, t, &[(name, &Value::Null, true, failure.as_deref())], width);
@@ -3147,6 +3571,27 @@ fn tool_detail(name: &str, a: &Value) -> String {
             let n = a.get("commands").and_then(Value::as_array).map(Vec::len).unwrap_or(0);
             if n == 0 { String::new() } else { trn("{n} commands", n, &[]) }
         }
+        "delete_node" => match a.get("ids").or_else(|| a.get("id")) {
+            Some(Value::Array(v)) => format!("{} layers", v.len()),
+            Some(Value::String(x)) => format!("layer {x}"),
+            Some(Value::Number(x)) => format!("layer {x}"),
+            _ => String::new(),
+        },
+        "clear_node_children" => match a.get("id").or_else(|| a.get("node_id")).or_else(|| a.get("parent_id")) {
+            Some(Value::String(x)) => format!("layer {x}"),
+            Some(Value::Number(x)) => format!("layer {x}"),
+            _ => String::new(),
+        },
+        "add_market_component_to_canvas" => {
+            let cid = a.get("component_id").or_else(|| a.get("id")).and_then(Value::as_str).unwrap_or_default();
+            short(cid)
+        }
+        "search_market_components" => s("query").to_string(),
+        "add_icon_to_canvas" => {
+            let icon = a.get("icon_id").or_else(|| a.get("icon")).and_then(Value::as_str).unwrap_or_default();
+            short(icon)
+        }
+        "search_icons" => s("query").to_string(),
         "list_commands" => s("filter").to_string(),
         "props_reference" => s("key").to_string(),
         "export" => s("format").to_string(),
@@ -3600,6 +4045,7 @@ mod tests {
             mcp_dispatched: false,
             provider: "openai".into(),
             model: "gpt-5.6".into(),
+            doc_uid: 0,
         });
         let err = send(&mut u.app, "again").expect_err("a second send is refused");
         assert!(err.contains("Stop"), "{err}");
@@ -3681,7 +4127,7 @@ mod tests {
         let out = u.app.session.execute("node.create", &json!({"type": "rectangle", "width": 10, "height": 10})).expect("a layer");
         let id = out["id"].as_u64().expect("an id");
         u.app.session.execute("select.set", &json!({"ids": [id]})).expect("selected");
-        let context = selection_context(&mut u.app);
+        let context = selection_context(&mut u.app, "");
         assert!(context.contains("Page:"), "{context}");
         assert!(context.contains("one layer"), "{context}");
     }
@@ -3695,7 +4141,7 @@ mod tests {
         let id = out["id"].as_u64().expect("an id");
         u.app.session.execute("select.set", &json!({"ids": [id]})).expect("selected");
         u.app.ui.chat.with_selection = false;
-        let context = selection_context(&mut u.app);
+        let context = selection_context(&mut u.app, "");
         assert!(context.contains("Page:"), "{context}");
         assert!(!context.contains("one layer"), "{context}");
         assert!(context.contains("Nothing is selected."), "{context}");
@@ -3788,6 +4234,7 @@ mod tests {
             mcp_dispatched: false,
             provider: "openai".into(),
             model: "gpt-5.6".into(),
+            doc_uid: 0,
         });
         stop(&mut u.app);
         assert!(u.app.ui.chat.streaming.is_none());
@@ -5516,6 +5963,7 @@ mod tests {
             mcp_dispatched: false,
             provider: "test".into(),
             model: "deepseek-v4.1-flash-free".into(),
+            doc_uid: 0,
         });
         u.app.session.chat.busy = true;
 
@@ -5569,5 +6017,90 @@ mod tests {
         assert_eq!(u.app.session.chat_messages()[1].content, "first answer");
         assert_eq!(u.app.ui.chat.draft, "second prompt");
         assert!(u.app.ui.chat.focus_draft);
+    }
+
+    #[test]
+    fn sync_active_tab_isolates_chat_sessions_across_documents() {
+        let mut u = chat_ui();
+        sync_active_tab(&mut u.app);
+
+        // Doc 1: Add a message and draft
+        let doc1_uid = u.app.session.ds().unwrap().uid;
+        u.app.ui.chat.draft = "Draft for Doc 1".to_string();
+        u.app.session.chat_append(ChatMessage::user("Prompt on Doc 1")).unwrap();
+
+        // Open Doc 2
+        u.app.session.execute("file.new", &json!({})).unwrap();
+        sync_active_tab(&mut u.app);
+
+        let doc2_uid = u.app.session.ds().unwrap().uid;
+        assert_ne!(doc1_uid, doc2_uid);
+
+        // Verify Doc 2 starts clean and isolated
+        assert!(u.app.ui.chat.draft.is_empty(), "Doc 2 draft should be empty");
+        assert!(u.app.session.chat_messages().is_empty(), "Doc 2 chat messages should be empty");
+
+        // Doc 2: Add its own message and draft
+        u.app.ui.chat.draft = "Draft for Doc 2".to_string();
+        u.app.session.chat_append(ChatMessage::user("Prompt on Doc 2")).unwrap();
+
+        // Switch back to Doc 1
+        u.app.session.active = 0;
+        sync_active_tab(&mut u.app);
+
+        assert_eq!(u.app.ui.chat.draft, "Draft for Doc 1");
+        assert_eq!(u.app.session.chat_messages().len(), 1);
+        assert_eq!(u.app.session.chat_messages()[0].content, "Prompt on Doc 1");
+
+        // Switch back to Doc 2
+        u.app.session.active = 1;
+        sync_active_tab(&mut u.app);
+
+        assert_eq!(u.app.ui.chat.draft, "Draft for Doc 2");
+        assert_eq!(u.app.session.chat_messages().len(), 1);
+        assert_eq!(u.app.session.chat_messages()[0].content, "Prompt on Doc 2");
+    }
+
+    #[test]
+    fn selection_context_resolves_at_mention_and_instructs_redesign() {
+        let mut u = chat_ui();
+        let frame_res = u
+            .app
+            .session
+            .execute(
+                "node.create",
+                &json!({
+                    "type": "frame",
+                    "name": "Hero Card",
+                    "width": 360.0,
+                    "height": 240.0
+                }),
+            )
+            .unwrap();
+        let frame_id = frame_res["id"].as_i64().unwrap();
+
+        // Create a child inside Hero Card
+        u.app
+            .session
+            .execute(
+                "node.create",
+                &json!({
+                    "type": "rectangle",
+                    "name": "Old Badge",
+                    "parent": frame_id,
+                    "width": 80.0,
+                    "height": 24.0
+                }),
+            )
+            .unwrap();
+
+        // Test with @Hero Card mention
+        let ctx_text = selection_context(&mut u.app, "@Hero Card please redesign this with modern dark styling");
+        assert!(ctx_text.contains("Target Node #"), "must list target node: {ctx_text}");
+        assert!(ctx_text.contains("Hero Card"), "must include node name: {ctx_text}");
+        assert!(ctx_text.contains("existingChildrenCount: 1"), "must list children: {ctx_text}");
+        assert!(ctx_text.contains("clear_node_children"), "must instruct to clear_node_children: {ctx_text}");
+        assert!(ctx_text.contains("set_properties"), "must instruct to set_properties: {ctx_text}");
+        assert!(ctx_text.contains("parent:"), "must instruct to use parent: {ctx_text}");
     }
 }

@@ -22,6 +22,7 @@ impl FigApp {
         // `file.open`/`file.close`). Record that presentation before returning, so an in-flight
         // screenshot admitted on the old file cannot accept pixels from the new one.
         self.observe_presentation();
+        crate::chat::sync_active_tab(self);
         r.map_err(|e| self.failed(id, &e)).ok()
     }
 
@@ -322,6 +323,7 @@ impl FigApp {
         let now = self.clock.now();
         self.autosave_tick(ctx, now);
         self.auto_save_tick(ctx, now);
+        crate::chat::sync_active_tab(self);
         // A command (a menu action, the CLI, the control channel) queued a chat message. It is
         // already in the conversation, so only the request needs starting — appending it again
         // here would duplicate the message in the transcript and send the model two copies.
@@ -331,7 +333,7 @@ impl FigApp {
                 self.ui.chat.failure = Some(e);
             }
         }
-        if self.ui.chat.streaming.is_some() {
+        if self.ui.chat.streaming.is_some() || !self.ui.chat.background_streamings.is_empty() {
             let _ = crate::chat::drain(self, ctx);
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
         }
