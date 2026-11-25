@@ -127,17 +127,11 @@ pub fn specs() -> Vec<CommandSpec> {
                 ok()
             }
         ),
-        spec!(
-            "ai.chat.askSelection",
-            "Ask AI about selection",
-            "{} → opens AI chat with current selection mentioned",
-            false,
-            |s, _| {
-                s.chat.pending_send = false;
-                s.request_ui("panel.ai", json!({}));
-                ok()
-            }
-        ),
+        spec!("ai.chat.askSelection", "Ask AI about selection", "{} → opens AI chat with current selection mentioned", false, |s, _| {
+            s.chat.pending_send = false;
+            s.request_ui("panel.ai", json!({}));
+            ok()
+        }),
         spec!("ai.storage.settings", "Cloud storage settings", "{} → {provider, endpoint?, bucket?, region?, configured}", false, |s, _| Ok(
             json!({
                 "provider": s.prefs.ai.storage_provider.id(),

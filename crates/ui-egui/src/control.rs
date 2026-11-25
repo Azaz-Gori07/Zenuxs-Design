@@ -1523,7 +1523,8 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
         "ai.tool" => {
             let name = p.get("name").and_then(Value::as_str).ok_or("`name` required")?;
             let args = p.get("arguments").cloned().unwrap_or(json!({}));
-            let tool = figcraft_engine::chat_tools::table().iter().find(|t| t.name == name).ok_or_else(|| figcraft_engine::chat_tools::instead_of(name))?;
+            let tool =
+                figcraft_engine::chat_tools::table().iter().find(|t| t.name == name).ok_or_else(|| figcraft_engine::chat_tools::instead_of(name))?;
             tool.run(&mut app.session, &args)
         }
         "ai.chat.send" => {
@@ -1531,15 +1532,20 @@ pub fn handle(app: &mut FigApp, ctx: &Context, method: &str, p: &Value) -> Resul
             if let Some(path) = p.get("image_path").and_then(Value::as_str)
                 && let Ok(bytes) = std::fs::read(path)
             {
-                let name = std::path::Path::new(path)
-                    .file_name()
-                    .map(|f| f.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "image.png".into());
+                let name = std::path::Path::new(path).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| "image.png".into());
                 crate::chat::attach_image_from_bytes(app, name, bytes);
             }
             app.ui.right_tab = crate::RightTab::Chat;
             app.ui.chat.stick = true;
             crate::chat::send(app, message).map(|_| json!({"ok": true}))
+        }
+        "ai.chat.draft" => {
+            if let Some(text) = p.get("text").and_then(Value::as_str) {
+                app.ui.chat.draft = text.to_string();
+                app.ui.right_tab = crate::RightTab::Chat;
+                return Ok(json!({"ok": true, "draft": app.ui.chat.draft}));
+            }
+            Ok(json!({"draft": app.ui.chat.draft}))
         }
         "ai.chat.messages" => {
             let busy = app.session.chat.busy || app.ui.chat.streaming.is_some();

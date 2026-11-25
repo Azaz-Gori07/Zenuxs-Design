@@ -19,7 +19,9 @@ use crate::widgets;
 
 #[allow(dead_code)]
 const UNUSED_AI_CATALOG_KEYS: &[&str] = &[
-    tr_noop("Add a connection with its API key, choose a model, then assign it to the Design role. A Vision model verifies sourced images before they are placed."),
+    tr_noop(
+        "Add a connection with its API key, choose a model, then assign it to the Design role. A Vision model verifies sourced images before they are placed.",
+    ),
     tr_noop("Add model"),
     tr_noop("Assignments"),
     tr_noop("Base URL"),
@@ -178,12 +180,7 @@ impl std::fmt::Debug for SkillInstallJob {
 
 impl Clone for SkillInstallJob {
     fn clone(&self) -> Self {
-        Self {
-            candidates: self.candidates.clone(),
-            current: self.current,
-            future: None,
-            original_url: self.original_url.clone(),
-        }
+        Self { candidates: self.candidates.clone(), current: self.current, future: None, original_url: self.original_url.clone() }
     }
 }
 
@@ -225,39 +222,31 @@ pub fn window(app: &mut FigApp, ctx: &egui::Context) {
             drain_storage_job(app, &mut editor);
             drain_account_job(app, &mut editor);
             // The tabs row with horizontal scroll support.
-            egui::ScrollArea::horizontal()
-                .id_salt("ai_settings_tabs_scroll")
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    let min_w = 640.0f32.max(ui.available_width());
-                    ui.set_width(min_w);
-                    let tabs = Tab::all().iter().map(|t| t.label()).collect::<Vec<_>>();
-                    if let Some(i) = widgets::segmented_text(ui, &tabs, editor.tab_index()) {
-                        editor.set_tab(Tab::all()[i]);
-                    }
-                });
+            egui::ScrollArea::horizontal().id_salt("ai_settings_tabs_scroll").auto_shrink([false, true]).show(ui, |ui| {
+                let min_w = 640.0f32.max(ui.available_width());
+                ui.set_width(min_w);
+                let tabs = Tab::all().iter().map(|t| t.label()).collect::<Vec<_>>();
+                if let Some(i) = widgets::segmented_text(ui, &tabs, editor.tab_index()) {
+                    editor.set_tab(Tab::all()[i]);
+                }
+            });
             ui.add_space(8.0);
 
             // Tab contents wrapped in vertical ScrollArea so users can scroll smoothly through all settings
-            egui::ScrollArea::vertical()
-                .id_salt("ai_settings_content_scroll")
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    match editor.tab {
-                        Tab::General => general_tab(app, ui, &mut ran, &t),
-                        Tab::Models => models_tab(app, ui, &mut editor, &mut ran, &t),
-                        Tab::Media => media_tab(app, ui, &mut editor, &mut ran, &t),
-                        Tab::Plugins => plugins_tab(app, ui, &t),
-                        Tab::Storage => storage_tab(app, ui, &mut editor, &mut ran, &t),
-                        Tab::Automation => automation_tab(app, ui, &mut editor, &mut ran, &t),
-                        Tab::Account => account_tab(app, ui, &mut editor, &mut ran, &t),
-                        Tab::Skills => {
-                            saved_skills = skills_tab(app, ui, &mut editor, &mut ran, &t);
-                        }
-                        Tab::Usage => usage_tab(app, ui, &t),
-                        Tab::Diagnostics => diagnostics_tab(app, ui, &mut ran, &t),
-                    }
-                });
+            egui::ScrollArea::vertical().id_salt("ai_settings_content_scroll").auto_shrink([false, true]).show(ui, |ui| match editor.tab {
+                Tab::General => general_tab(app, ui, &mut ran, &t),
+                Tab::Models => models_tab(app, ui, &mut editor, &mut ran, &t),
+                Tab::Media => media_tab(app, ui, &mut editor, &mut ran, &t),
+                Tab::Plugins => plugins_tab(app, ui, &t),
+                Tab::Storage => storage_tab(app, ui, &mut editor, &mut ran, &t),
+                Tab::Automation => automation_tab(app, ui, &mut editor, &mut ran, &t),
+                Tab::Account => account_tab(app, ui, &mut editor, &mut ran, &t),
+                Tab::Skills => {
+                    saved_skills = skills_tab(app, ui, &mut editor, &mut ran, &t);
+                }
+                Tab::Usage => usage_tab(app, ui, &t),
+                Tab::Diagnostics => diagnostics_tab(app, ui, &mut ran, &t),
+            });
         });
 
     app.ui.ai_settings = editor;
@@ -670,7 +659,7 @@ fn media_tab(app: &mut FigApp, ui: &mut Ui, editor: &mut Editor, ran: &mut Vec<(
 /// The curated plugin directory: what is available, its category and whether it can run here.
 fn plugins_tab(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
     section_header(ui, tr("Plugin directory"), t);
-    widgets::label(ui, tr("A curated directory of plugins. Plugins run in FigCraft's sandbox; install only ones you trust."), t.text_secondary);
+    widgets::label(ui, tr("A curated directory of plugins. Plugins run in sycnUI's sandbox; install only ones you trust."), t.text_secondary);
     ui.add_space(6.0);
     let installed: Vec<&str> = app.session.prefs.plugins.iter().map(|p| p.manifest.id.as_str()).collect();
     egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
@@ -963,7 +952,7 @@ fn automation_tab(app: &mut FigApp, ui: &mut Ui, editor: &mut Editor, ran: &mut 
     widgets::label(
         ui,
         tr(
-            "figcraft-cli mcp serves this document over the Model Context Protocol, so an agent outside the app can drive it. The control channel (figcraft --control PORT) is the other way in.",
+            "sycnUI MCP serves this document over the Model Context Protocol, so an agent outside the app can drive it. The control channel (figcraft --control PORT) is the other way in.",
         ),
         t.text_secondary,
     );
@@ -1310,13 +1299,7 @@ fn skills_tab(app: &mut FigApp, ui: &mut Ui, editor: &mut Editor, ran: &mut Vec<
     let busy = editor.skill_install_job.is_some();
     ui.horizontal(|ui| {
         let mut typed = editor.github_skill_url.clone();
-        widgets::text_input(
-            ui,
-            egui::Id::unique("ai_github_skill_url"),
-            &mut typed,
-            320.0,
-            "https://github.com/owner/repo",
-        );
+        widgets::text_input(ui, egui::Id::unique("ai_github_skill_url"), &mut typed, 320.0, "https://github.com/owner/repo");
         editor.github_skill_url = typed;
 
         let ready = !editor.github_skill_url.trim().is_empty() && !busy;
@@ -1327,12 +1310,7 @@ fn skills_tab(app: &mut FigApp, ui: &mut Ui, editor: &mut Editor, ran: &mut Vec<
                 editor.skill_install_status = Some(("error".into(), "Please enter a valid GitHub URL.".to_string()));
             } else {
                 let fut = app.services.fetch_url(&candidates[0]);
-                editor.skill_install_job = Some(SkillInstallJob {
-                    candidates,
-                    current: 0,
-                    future: fut,
-                    original_url: url,
-                });
+                editor.skill_install_job = Some(SkillInstallJob { candidates, current: 0, future: fut, original_url: url });
                 editor.skill_install_status = Some(("info".into(), "Fetching skill from GitHub…".to_string()));
             }
         }

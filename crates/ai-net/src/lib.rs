@@ -71,10 +71,7 @@ pub fn transport() -> Box<dyn Transport> {
 pub fn fetch_text(url: &str) -> Result<String, String> {
     figcraft_ai::validate_remote_url(url).map_err(|e| e.to_string())?;
     let agent = ureq::Agent::new_with_config(
-        ureq::config::Config::builder()
-            .http_status_as_error(false)
-            .timeout_global(Some(std::time::Duration::from_secs(10)))
-            .build(),
+        ureq::config::Config::builder().http_status_as_error(false).timeout_global(Some(std::time::Duration::from_secs(10))).build(),
     );
     let resp = agent.get(url).header("user-agent", figcraft_ai::USER_AGENT).call().map_err(|e| e.to_string())?;
     let status = resp.status().as_u16();
@@ -101,7 +98,9 @@ pub async fn fetch_text_async(url: &str) -> Result<String, String> {
     if !(200..300).contains(&status) {
         return Err(format!("HTTP {status}"));
     }
-    let text_val = wasm_bindgen_futures::JsFuture::from(resp.text().map_err(|_| "cannot read response text".to_string())?).await.map_err(|_| "reading text failed".to_string())?;
+    let text_val = wasm_bindgen_futures::JsFuture::from(resp.text().map_err(|_| "cannot read response text".to_string())?)
+        .await
+        .map_err(|_| "reading text failed".to_string())?;
     text_val.as_string().ok_or_else(|| "response is not valid text".to_string())
 }
 
@@ -270,11 +269,7 @@ fn read_stream(reader: impl std::io::Read, protocol: Protocol, on_chunk: &mut dy
 
 /// Extract an error message from a provider response payload, if present.
 fn extract_error_detail(text: &str) -> Option<String> {
-    let json_candidate = if let Some(idx) = text.find('{') {
-        &text[idx..]
-    } else {
-        text
-    };
+    let json_candidate = if let Some(idx) = text.find('{') { &text[idx..] } else { text };
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_candidate) {
         if let Some(msg) = v.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
             let trimmed = msg.trim();

@@ -97,6 +97,8 @@ pub struct Panel {
     pub focus_draft: bool,
     /// Last selected element id, used to auto-mention newly clicked/selected elements.
     pub last_selected_id: Option<u64>,
+    /// Active slash command skill instructions for the current turn, if any.
+    pub active_turn_skill: Option<(String, String)>,
 }
 
 /// An image attached to the composer draft (pasted or selected).
@@ -131,6 +133,7 @@ impl Default for Panel {
             attached_image: None,
             focus_draft: false,
             last_selected_id: None,
+            active_turn_skill: None,
         }
     }
 }
@@ -350,6 +353,106 @@ or a gradient with `stops`. Padding is `24`, `[top,right,bottom,left]` or `{top,
 Never claim something the document does not show: read it back before you say it. If a capability \
 does not exist, say so and offer the nearest one that does.";
 
+/// A slash command and its short description for autocomplete.
+#[derive(Clone, Copy, Debug)]
+pub struct SlashCommandItem {
+    pub name: &'static str,
+    pub desc: &'static str,
+}
+
+pub const SLASH_COMMANDS: &[SlashCommandItem] = &[
+    SlashCommandItem { name: "apple-design", desc: "Apple HIG, Liquid Glass, iOS & macOS craft" },
+    SlashCommandItem { name: "impeccable", desc: "Production-grade UI craft, typography & polish" },
+    SlashCommandItem { name: "market", desc: "100% Free prebuilt Shadcn ecosystem components" },
+    SlashCommandItem { name: "animate", desc: "Motion, physics springs & purposeful transitions" },
+    SlashCommandItem { name: "mobile-native", desc: "Mobile web & native feel, touch targets, swipe" },
+    SlashCommandItem { name: "improve-ui", desc: "Audit UI against tokens, spacing & design system" },
+    SlashCommandItem { name: "break-ui", desc: "Stress-test UI with edge-case data & fix flaws" },
+    SlashCommandItem { name: "choreograph", desc: "Coordinate multi-element staggered animations" },
+    SlashCommandItem { name: "gestures", desc: "Drag, swipe & bottom sheet 1:1 interactions" },
+    SlashCommandItem { name: "daisyui", desc: "DaisyUI semantic components & Tailwind classes" },
+    SlashCommandItem { name: "headless-ui", desc: "Accessible, unstyled component primitives" },
+    SlashCommandItem { name: "dashboard", desc: "Analytics dashboard, stats cards & data tables" },
+    SlashCommandItem { name: "landing-page", desc: "Modern hero section, feature grids & CTAs" },
+    SlashCommandItem { name: "pricing", desc: "Pricing tier cards, feature matrix & billing toggle" },
+    SlashCommandItem { name: "settings", desc: "Settings panel, forms, toggles & inputs" },
+    SlashCommandItem { name: "onboarding", desc: "Step-by-step onboarding walkthroughs" },
+];
+
+/// Look up skill instructions for an explicit slash command.
+pub fn skill_for_command(app: &FigApp, cmd: &str) -> Option<(String, String)> {
+    let lower = cmd.to_lowercase();
+    // 1. Check prompt skills registry in preferences
+    for s in app.session.prefs.ai.skills.all() {
+        let matches_name = s.name.eq_ignore_ascii_case(&lower);
+        let matches_id = s.id.eq_ignore_ascii_case(&lower) || s.id.strip_prefix("default.").is_some_and(|id| id.eq_ignore_ascii_case(&lower));
+        if matches_name || matches_id {
+            return Some((s.name.clone(), s.prompt_content.clone()));
+        }
+    }
+    // 2. Check semantic skill router
+    let router = figcraft_ai::skills::SkillRouter::default();
+    if let Some(skills) = router.resolve_command(&lower) {
+        if let Some(s) = skills.first() {
+            let mut content = format!("# {}\n\n{}\n\n{}", s.name, s.description, s.knowledge);
+            if !s.validation.is_empty() {
+                content.push_str("\n\n## Validation Rules\n");
+                for v in &s.validation {
+                    content.push_str(&format!("- {v}\n"));
+                }
+            }
+            return Some((s.name.clone(), content));
+        }
+    }
+    // 3. Special aliases
+    if lower == "market" || lower == "shadcn" {
+        return Some((
+            "market".to_string(),
+            "# Component Marketplace Priority\n\n\
+            Always search and prioritize prebuilt components from Shadcn ecosystem registries \
+            (@shadcn, @originui, @kibo, @cult, @animate-ui, @bundui, @neobrutalism) using \
+            `search_market_components` and `add_market_component_to_canvas` before creating any primitives."
+                .to_string(),
+        ));
+    }
+    None
+}
+
+/// Parse a leading /command from the prompt. Returns the clean display prompt and optional skill data.
+pub fn parse_slash_skill(app: &FigApp, text: &str) -> (String, Option<(String, String)>) {
+    let trimmed = text.trim_start();
+    if !trimmed.starts_with('/') {
+        return (text.to_string(), None);
+    }
+    let rest = &trimmed[1..];
+    let mut parts = rest.splitn(2, char::is_whitespace);
+    let cmd = parts.next().unwrap_or("").trim();
+    let prompt = parts.next().unwrap_or("").trim();
+
+    if cmd.is_empty() {
+        return (text.to_string(), None);
+    }
+
+    if let Some((name, content)) = skill_for_command(app, cmd) {
+        let display_prompt =
+            if prompt.is_empty() { format!("⚡ [/{name}] Apply {name} design principles.") } else { format!("⚡ [/{name}] {prompt}") };
+        (display_prompt, Some((name, content)))
+    } else {
+        (text.to_string(), None)
+    }
+}
+
+/// The standing instructions for the current turn: if a slash command was used, ONLY that
+/// command's instructions are injected; otherwise, only custom user-authored skills are injected.
+fn current_standing(app: &FigApp) -> String {
+    if let Some((_, content)) = &app.ui.chat.active_turn_skill {
+        content.clone()
+    } else {
+        let custom: Vec<_> = app.session.prefs.ai.skills.active().into_iter().filter(|s| !s.is_default).collect();
+        figcraft_ai::skills::active_prompt_text(&custom)
+    }
+}
+
 /// Send what the person typed.
 ///
 /// The message goes into the conversation, the skills the router activates ride along on it, and
@@ -359,14 +462,13 @@ pub fn send(app: &mut FigApp, text: &str) -> Result<(), String> {
     if text.is_empty() && app.ui.chat.attached_image.is_none() {
         return Ok(());
     }
-    let text = if text.is_empty() {
-        "Please inspect this image and build or adapt this design in sycnUI.".to_string()
-    } else {
-        text
-    };
+    let text = if text.is_empty() { "Please inspect this image and build or adapt this design in sycnUI.".to_string() } else { text };
     if app.ui.chat.streaming.is_some() {
         return Err(tr("A request is already out. Stop it first.").to_string());
     }
+
+    let (display_text, slash_skill) = parse_slash_skill(app, &text);
+    app.ui.chat.active_turn_skill = slash_skill;
 
     // The skills this message activates, as the model reads them.
     let skills_block = skills_for(app, &text);
@@ -381,14 +483,10 @@ pub fn send(app: &mut FigApp, text: &str) -> Result<(), String> {
     // The selection and the page, as the model reads them.
     let selection = selection_context(app);
 
-    let user = if skills_block.is_empty() { text } else { format!("{text}{skills_block}") };
+    let user = if skills_block.is_empty() { display_text } else { format!("{display_text}{skills_block}") };
     let attached = app.ui.chat.attached_image.take();
     let images = attached.map(|a| vec![a.data_url]).unwrap_or_default();
-    let msg = if images.is_empty() {
-        ChatMessage::user(user)
-    } else {
-        ChatMessage::user_with_images(user, images)
-    };
+    let msg = if images.is_empty() { ChatMessage::user(user) } else { ChatMessage::user_with_images(user, images) };
     app.session.chat_append(msg).map_err(|e| e.to_string())?;
     app.session.chat.context = selection;
 
@@ -424,11 +522,21 @@ pub fn send_pending(app: &mut FigApp) -> Result<(), String> {
     // worked out here: `send` does it before appending, and a send that skipped the router would
     // reach the model with no skill knowledge at all.
     if let Some(text) = app.session.chat_messages().last().map(|m| m.content.clone()) {
-        let block = skills_for(app, &text);
-        if !block.is_empty() && !text.contains(figcraft_ai::skills::SKILL_CONTEXT_MARKER) {
+        let (display_text, slash_skill) = parse_slash_skill(app, &text);
+        let has_slash = slash_skill.is_some();
+        app.ui.chat.active_turn_skill = slash_skill;
+        if has_slash {
             let last = app.session.chat.messages.len().saturating_sub(1);
             if let Some(slot) = app.session.chat.messages.get_mut(last) {
-                slot.content = format!("{text}{block}");
+                slot.content = display_text;
+            }
+        } else {
+            let block = skills_for(app, &text);
+            if !block.is_empty() && !text.contains(figcraft_ai::skills::SKILL_CONTEXT_MARKER) {
+                let last = app.session.chat.messages.len().saturating_sub(1);
+                if let Some(slot) = app.session.chat.messages.get_mut(last) {
+                    slot.content = format!("{text}{block}");
+                }
             }
         }
     }
@@ -438,7 +546,7 @@ pub fn send_pending(app: &mut FigApp) -> Result<(), String> {
 
 /// Assemble the request from the conversation as it stands and start its first step.
 fn dispatch(app: &mut FigApp) -> Result<(), String> {
-    let standing = figcraft_ai::skills::active_prompt_text(&app.session.prefs.ai.skills.active());
+    let standing = current_standing(app);
     let request = build_request(app, &standing)?;
     start_step(app, request, 0)
 }
@@ -452,7 +560,7 @@ fn continue_step(app: &mut FigApp) -> Result<(), String> {
 /// Start the next model step, numbering it as `step`. The step number is what
 /// [`MAX_STEPS`] counts, so a step started after the stream was taken keeps the count going.
 fn continue_step_at(app: &mut FigApp, step: usize) -> Result<(), String> {
-    let standing = figcraft_ai::skills::active_prompt_text(&app.session.prefs.ai.skills.active());
+    let standing = current_standing(app);
     let request = build_request(app, &standing)?;
     start_step(app, request, step)
 }
@@ -506,19 +614,9 @@ pub fn selection_mention_info(app: &FigApp) -> Option<MentionInfo> {
         _ => "Element",
     };
     if count == 1 {
-        Some(MentionInfo {
-            name: node.name.clone(),
-            kind,
-            id: first_id.0,
-            count: 1,
-        })
+        Some(MentionInfo { name: node.name.clone(), kind, id: first_id.0, count: 1 })
     } else {
-        Some(MentionInfo {
-            name: format!("{} + {} more", node.name, count - 1),
-            kind: "Selection",
-            id: first_id.0,
-            count,
-        })
+        Some(MentionInfo { name: format!("{} + {} more", node.name, count - 1), kind: "Selection", id: first_id.0, count })
     }
 }
 
@@ -567,13 +665,16 @@ fn selection_context(app: &mut FigApp) -> String {
             if let Some(b) = ds.doc.bounds_of(&[*id]) {
                 out.push_str(&format!(
                     "- Node #{} (\"{}\", {}): bounds [x: {:.1}, y: {:.1}, w: {:.1}, h: {:.1}]",
-                    node.id.0, node.name, kind_str, b.x0, b.y0, b.width(), b.height()
+                    node.id.0,
+                    node.name,
+                    kind_str,
+                    b.x0,
+                    b.y0,
+                    b.width(),
+                    b.height()
                 ));
             } else {
-                out.push_str(&format!(
-                    "- Node #{} (\"{}\", {}): size [w: {:.1}, h: {:.1}]",
-                    node.id.0, node.name, kind_str, node.width, node.height
-                ));
+                out.push_str(&format!("- Node #{} (\"{}\", {}): size [w: {:.1}, h: {:.1}]", node.id.0, node.name, kind_str, node.width, node.height));
             }
             if let Some(text) = node.kind.text() {
                 out.push_str(&format!(", text: \"{}\"", text.characters));
@@ -809,7 +910,9 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
     if finished && let Some(mut streaming) = app.ui.chat.streaming.take() {
         if let Some(err_msg) = app.ui.chat.failure.clone() {
             app.session.chat.busy = false;
-            let _ = app.session.chat_append(ChatMessage::assistant(format!("❌ **Provider Error:** {err_msg}")));
+            let _ = app.session.chat_append(ChatMessage::assistant(format!(
+                "❌ **Provider Error:** {err_msg}\n\n*Why AI stopped:* Upstream connection or model provider error. Check AI settings or your local network connection."
+            )));
             ctx.request_repaint();
             return true;
         }
@@ -818,24 +921,11 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
         if calls.is_empty() {
             // An answer with nothing more to do: the send is over. Two things can still be wrong
             // with it, and both are the document's answer rather than the model's.
-            //
-            // The model says it is finished. Whether it is, is the audit's answer: it reads the
-            // finished layers and reports the faults a picture cannot show — a clipped headline,
-            // a grey box where the photography belongs, an empty section. Handing those back is
-            // the difference between a screen the model stopped on and a screen that holds up; a
-            // model asked to audit itself skips the step, so the app runs it.
-            //
-            // This comes before the empty-answer retry because it is the better nudge. A model
-            // that answered with nothing but left twelve empty picture slots does not need to be
-            // told to "continue": it needs the list of what is unfinished, which is also what a
-            // bare "continue" leaves it to invent.
-            //
-            // Only a send that ran at least one tool can have changed the document; a question
-            // answered in prose is not audited, and must not be turned into one.
-            const MAX_REVIEW_ROUNDS: usize = 3;
+            const MAX_REVIEW_ROUNDS: usize = 2;
             if app.ui.chat.tools_run_count > 0
                 && app.ui.chat.review_rounds < MAX_REVIEW_ROUNDS
                 && !streaming.text.trim().is_empty()
+                && !app.ui.chat.touched_node_ids.is_empty()
                 && let Some(blockers) = audit_blockers(app)
             {
                 app.ui.chat.review_rounds += 1;
@@ -854,7 +944,9 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
                     }
                     Err(e) => {
                         app.ui.chat.failure = Some(e.clone());
-                        let _ = app.session.chat_append(ChatMessage::assistant(format!("❌ **Provider Error:** {e}")));
+                        let _ = app.session.chat_append(ChatMessage::assistant(format!(
+                            "❌ **Provider Error:** {e}\n\n*Why AI stopped:* Upstream provider closed connection or failed to respond."
+                        )));
                     }
                 }
             }
@@ -862,7 +954,11 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
             // mid-work strands a design half-built, and the same model usually answers when asked
             // again. The empty answer is not kept in the conversation: it would only teach the
             // model that silence is an acceptable reply.
-            if streaming.text.trim().is_empty() && app.ui.chat.empty_answers < MAX_EMPTY_ANSWERS {
+            if streaming.text.trim().is_empty()
+                && app.ui.chat.tools_run_count == 0
+                && app.ui.chat.touched_node_ids.is_empty()
+                && app.ui.chat.empty_answers < MAX_EMPTY_ANSWERS
+            {
                 app.ui.chat.empty_answers += 1;
                 let _ = app.session.chat_append(ChatMessage::user(EMPTY_ANSWER_NUDGE));
                 let step = streaming.step + 1;
@@ -873,7 +969,9 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
                     }
                     Err(e) => {
                         app.ui.chat.failure = Some(e.clone());
-                        let _ = app.session.chat_append(ChatMessage::assistant(format!("❌ **Provider Error:** {e}")));
+                        let _ = app.session.chat_append(ChatMessage::assistant(format!(
+                            "❌ **Provider Error:** {e}\n\n*Why AI stopped:* Upstream provider failed to respond."
+                        )));
                     }
                 }
             }
@@ -881,10 +979,24 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
             if !streaming.text.trim().is_empty() {
                 let _ = app.session.chat_append(ChatMessage::assistant(streaming.text.clone()));
                 app.ui.chat.empty_answers = 0;
+            } else if app.ui.chat.tools_run_count > 0 || !app.ui.chat.touched_node_ids.is_empty() {
+                let ops = app.ui.chat.tools_run_count;
+                let layers = app.ui.chat.touched_node_ids.len().max(1);
+                let summary = format!(
+                    "✨ **Design updated on canvas**\n\n\
+                    - Executed {} tool operations on canvas.\n\
+                    - Placed and styled {} design element(s).\n\n\
+                    *Status:* Complete. Inspect the layers in the left panel, customize styles, or let me know what to adjust next!",
+                    ops, layers
+                );
+                let _ = app.session.chat_append(ChatMessage::assistant(summary));
+                app.ui.chat.empty_answers = 0;
             } else if app.ui.chat.failure.is_none() {
-                let err = tr("The model answered with nothing. Try again, or pick another model in AI & Agents.").to_string();
+                let err = tr("The model stopped without generating content or running tools.").to_string();
                 app.ui.chat.failure = Some(err.clone());
-                let _ = app.session.chat_append(ChatMessage::assistant(format!("❌ {err}")));
+                let _ = app.session.chat_append(ChatMessage::assistant(format!(
+                    "⚠️ **AI Stopped**\n\n{err}\n\n*Why:* The model returned an empty reply. Please try again or switch model in AI settings."
+                )));
             }
             ctx.request_repaint();
             return true;
@@ -1708,13 +1820,11 @@ fn audit_blockers(app: &mut FigApp) -> Option<String> {
     if findings.is_empty() {
         return None;
     }
-    let touched = &app.ui.chat.touched_node_ids;
+    let touched = app.ui.chat.touched_node_ids.clone();
     let mut out = String::new();
     for f in findings {
         let kind = f.get("kind").and_then(Value::as_str).unwrap_or("fault");
         let id = f.get("id").and_then(Value::as_i64).unwrap_or_default();
-        // If tools ran and created/touched specific layers, only report findings on those touched layers
-        // or ignore pre-existing empty slots that have nothing to do with this turn.
         if !touched.is_empty() && !touched.contains(&id) {
             continue;
         }
@@ -2120,12 +2230,8 @@ pub(crate) fn attach_image_from_bytes(app: &mut FigApp, name: String, bytes: Vec
     } else {
         "image/png"
     };
-    app.ui.chat.attached_image = Some(ChatAttachment {
-        name,
-        mime: mime.into(),
-        data_url: format!("data:{mime};base64,{b64}"),
-        preview_bytes: bytes,
-    });
+    app.ui.chat.attached_image =
+        Some(ChatAttachment { name, mime: mime.into(), data_url: format!("data:{mime};base64,{b64}"), preview_bytes: bytes });
 }
 
 /// Decode an attachment data URL into a TextureHandle for thumbnail rendering.
@@ -2208,9 +2314,7 @@ fn composer(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32) {
             v_key || paste_event
         });
 
-    if is_paste
-        && let Some((png_bytes, _, _)) = crate::menus::clipboard_png(app)
-    {
+    if is_paste && let Some((png_bytes, _, _)) = crate::menus::clipboard_png(app) {
         attach_image_from_bytes(app, "pasted_image.png".into(), png_bytes);
         ui.ctx().request_repaint();
     }
@@ -2258,7 +2362,9 @@ fn composer(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32) {
         let max_label_w = (field_w - 56.0).max(20.0);
         let shown = widgets::elide_font(ui, &label, max_label_w, regular(11.0));
         let text_r = Rect::from_min_max(pos2(icon_r.max.x + 4.0, chip_rect.min.y), pos2(chip_rect.max.x - 24.0, chip_rect.max.y));
-        let _ = ui.interact(text_r, egui::Id::unique("chat_mention_tag"), Sense::click()).tip("Mentioned target element: prompts will directly modify this element");
+        let _ = ui
+            .interact(text_r, egui::Id::unique("chat_mention_tag"), Sense::click())
+            .tip("Mentioned target element: prompts will directly modify this element");
         ui.painter().text(pos2(icon_r.max.x + 4.0, chip_rect.center().y), Align2::LEFT_CENTER, shown, regular(11.0), t.accent_text);
 
         let close_r = Rect::from_min_size(pos2(chip_rect.max.x - 22.0, chip_rect.min.y + 4.0), vec2(18.0, 18.0));
@@ -2362,6 +2468,90 @@ fn composer(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32) {
     }
     composer_bar(app, ui, t, width, busy);
     composer_failure(app, ui, t, width);
+    slash_command_autocomplete(app, ui, t, rect);
+}
+
+/// Autocomplete popup for slash commands when user types `/...`.
+fn slash_command_autocomplete(app: &mut FigApp, ui: &mut Ui, t: &Tokens, composer_rect: Rect) {
+    let draft = app.ui.chat.draft.trim_start();
+    if !draft.starts_with('/') || draft.contains(' ') {
+        return;
+    }
+    let query = draft.strip_prefix('/').unwrap_or("").to_lowercase();
+    let matching: Vec<&SlashCommandItem> = SLASH_COMMANDS
+        .iter()
+        .filter(|cmd| if query.is_empty() { true } else { cmd.name.to_lowercase().contains(&query) || cmd.desc.to_lowercase().contains(&query) })
+        .collect();
+
+    if matching.is_empty() {
+        return;
+    }
+
+    // Press Tab to autocomplete the first matching command
+    let tab_pressed = ui.input(|i| i.key_pressed(egui::Key::Tab));
+    if tab_pressed && let Some(first) = matching.first() {
+        app.ui.chat.draft = format!("/{} ", first.name);
+        app.ui.chat.focus_draft = true;
+        ui.ctx().request_repaint();
+        return;
+    }
+
+    let popup_w = (composer_rect.width() + 16.0).min(340.0);
+    let row_h = 28.0;
+    let list_h = (matching.len() as f32 * row_h).min(180.0);
+    let popup_h = list_h + 34.0;
+    let popup_pos = pos2(composer_rect.min.x - 4.0, (composer_rect.min.y - popup_h - 6.0).max(10.0));
+
+    let mut selected_cmd: Option<&str> = None;
+
+    egui::Area::new(egui::Id::unique("chat_slash_autocomplete")).order(egui::Order::Foreground).fixed_pos(popup_pos).show(ui.ctx(), |ui| {
+        egui::Frame::popup(ui.style())
+            .fill(t.panel)
+            .stroke(Stroke::new(1.0, t.border_strong))
+            .corner_radius(CornerRadius::same(8))
+            .shadow(egui::Shadow { offset: [0, 4], blur: 16, spread: 0, color: t.shadow })
+            .show(ui, |ui| {
+                ui.set_width(popup_w - 16.0);
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    icons::paint(ui.painter(), Rect::from_min_size(ui.cursor().min + vec2(2.0, 2.0), Vec2::splat(12.0)), Icon::Sparkle, t.accent);
+                    ui.add_space(16.0);
+                    ui.label(egui::RichText::new("⚡ Skills & Slash Commands (Press Tab to select)").font(semibold(11.0)).color(t.accent_text));
+                });
+                ui.add_space(2.0);
+                ui.separator();
+
+                egui::ScrollArea::vertical().max_height(list_h).show(ui, |ui| {
+                    for item in &matching {
+                        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+                        if resp.hovered() {
+                            ui.painter().rect_filled(rect, CornerRadius::same(5), t.hover);
+                        }
+                        let name_text = format!("/{}", item.name);
+                        ui.painter().text(
+                            pos2(rect.min.x + 8.0, rect.center().y),
+                            Align2::LEFT_CENTER,
+                            &name_text,
+                            semibold(11.0),
+                            if resp.hovered() { t.accent_text } else { t.text },
+                        );
+                        let desc_x = rect.min.x + 105.0;
+                        let room = (rect.max.x - desc_x - 6.0).max(20.0);
+                        let elided_desc = widgets::elide_font(ui, item.desc, room, regular(10.0));
+                        ui.painter().text(pos2(desc_x, rect.center().y), Align2::LEFT_CENTER, elided_desc, regular(10.0), t.text_secondary);
+                        if resp.clicked() {
+                            selected_cmd = Some(item.name);
+                        }
+                    }
+                });
+            });
+    });
+
+    if let Some(name) = selected_cmd {
+        app.ui.chat.draft = format!("/{} ", name);
+        app.ui.chat.focus_draft = true;
+        ui.ctx().request_repaint();
+    }
 }
 
 /// The composer field's box: the theme's field fill, a hairline edge, and the accent edge while
@@ -2634,6 +2824,9 @@ fn transcript_body(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32) {
                 user_message(ui, t, &message.content, &message.images, width);
             }
             Role::Assistant => {
+                if message.content.starts_with("Design review pass ") {
+                    continue;
+                }
                 if !message.content.is_empty() {
                     answer(ui, t, &message.content, width);
                 }
@@ -3283,6 +3476,35 @@ mod tests {
     }
 
     #[test]
+    fn slash_command_parses_known_skill_and_populates_prompt() {
+        let u = chat_ui();
+        let (display, skill_opt) = parse_slash_skill(&u.app, "/apple-design create a settings card");
+        assert!(display.starts_with("⚡ [/apple-design]"), "display: {display}");
+        assert!(display.contains("create a settings card"));
+        let (name, content) = skill_opt.expect("apple-design skill found");
+        assert_eq!(name, "apple-design");
+        assert!(content.contains("Human Interface Guidelines") || content.contains("Liquid Glass"), "content: {content}");
+    }
+
+    #[test]
+    fn slash_command_parses_market_component_alias() {
+        let u = chat_ui();
+        let (display, skill_opt) = parse_slash_skill(&u.app, "/market add a pricing card");
+        assert!(display.starts_with("⚡ [/market]"), "display: {display}");
+        let (name, content) = skill_opt.expect("market skill found");
+        assert_eq!(name, "market");
+        assert!(content.contains("Component Marketplace Priority"));
+    }
+
+    #[test]
+    fn plain_prompt_has_no_slash_skill() {
+        let u = chat_ui();
+        let (display, skill_opt) = parse_slash_skill(&u.app, "create a modern blue button");
+        assert_eq!(display, "create a modern blue button");
+        assert!(skill_opt.is_none());
+    }
+
+    #[test]
     fn the_chat_needs_a_model_and_says_what_is_missing() {
         let mut u = Ui::new(figcraft_engine::Session::empty());
         let err = send(&mut u.app, "hello").expect_err("no model is configured");
@@ -3352,7 +3574,8 @@ mod tests {
     #[test]
     fn selection_mention_info_and_ask_ai_workflow() {
         let mut u = chat_ui();
-        let out = u.app.session.execute("node.create", &json!({"type": "rectangle", "name": "Hero Card", "width": 120, "height": 60})).expect("a layer");
+        let out =
+            u.app.session.execute("node.create", &json!({"type": "rectangle", "name": "Hero Card", "width": 120, "height": 60})).expect("a layer");
         let id = out["id"].as_u64().expect("an id");
         u.app.session.execute("select.set", &json!({"ids": [id]})).expect("selected");
         let mention = selection_mention_info(&u.app).expect("selection mention info");
@@ -5171,10 +5394,7 @@ mod tests {
         assert!(finished, "drain must finish immediately on error");
         assert!(!u.app.session.chat.busy, "chat must no longer be busy");
 
-        assert_eq!(
-            u.app.ui.chat.failure.as_deref(),
-            Some("Upstream request failed: Endpoint is unavailable.")
-        );
+        assert_eq!(u.app.ui.chat.failure.as_deref(), Some("Upstream request failed: Endpoint is unavailable."));
 
         let messages = u.app.session.chat_messages();
         let last = messages.last().expect("last message");

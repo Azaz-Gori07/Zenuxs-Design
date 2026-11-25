@@ -470,12 +470,7 @@ pub fn save_session_state(config_dir: &Path, session: &Session) {
         let has_disk_file = ds.path.as_ref().is_some_and(|p| !is_dirty && Path::new(p).exists());
 
         if has_disk_file {
-            tabs.push(SavedTab {
-                title: ds.doc.name.clone(),
-                path: ds.path.clone(),
-                draft_file: None,
-                is_dirty: false,
-            });
+            tabs.push(SavedTab { title: ds.doc.name.clone(), path: ds.path.clone(), draft_file: None, is_dirty: false });
         } else {
             // Untitled canvas or modified file: persist full document draft with versions and branches.
             let draft_name = format!("draft_{}.figcraft", ds.uid);
@@ -485,21 +480,11 @@ pub fn save_session_state(config_dir: &Path, session: &Session) {
                 && write_private_atomic(&draft_path, &bytes).is_ok()
             {
                 active_draft_files.insert(draft_name.clone());
-                tabs.push(SavedTab {
-                    title: ds.doc.name.clone(),
-                    path: ds.path.clone(),
-                    draft_file: Some(draft_name),
-                    is_dirty,
-                });
+                tabs.push(SavedTab { title: ds.doc.name.clone(), path: ds.path.clone(), draft_file: Some(draft_name), is_dirty });
                 continue;
             }
             if let Some(ref p) = ds.path {
-                tabs.push(SavedTab {
-                    title: ds.doc.name.clone(),
-                    path: Some(p.clone()),
-                    draft_file: None,
-                    is_dirty,
-                });
+                tabs.push(SavedTab { title: ds.doc.name.clone(), path: Some(p.clone()), draft_file: None, is_dirty });
             }
         }
     }
@@ -517,10 +502,7 @@ pub fn save_session_state(config_dir: &Path, session: &Session) {
         }
     }
 
-    let saved = SavedSession {
-        active_tab: session.active,
-        tabs,
-    };
+    let saved = SavedSession { active_tab: session.active, tabs };
 
     if let Ok(json_bytes) = serde_json::to_vec_pretty(&saved) {
         let _ = write_private_atomic(&session_dir.join(SESSION_STATE_FILE), &json_bytes);
@@ -547,9 +529,7 @@ pub fn restore_session_state(config_dir: &Path, session: &mut Session) -> bool {
             let draft_path = session_dir.join(draft_name);
             if draft_path.exists() {
                 let count_before = session.docs.len();
-                if session.execute("file.recover", &json!({"path": draft_path.to_string_lossy()})).is_ok()
-                    && session.docs.len() > count_before
-                {
+                if session.execute("file.recover", &json!({"path": draft_path.to_string_lossy()})).is_ok() && session.docs.len() > count_before {
                     if let Some(ds) = session.docs.last_mut() {
                         ds.path = tab.path.clone();
                         Arc::make_mut(&mut ds.doc).name = tab.title.clone();
@@ -567,9 +547,7 @@ pub fn restore_session_state(config_dir: &Path, session: &mut Session) -> bool {
             && Path::new(path).exists()
         {
             let count_before = session.docs.len();
-            if session.execute("file.open", &json!({"path": path})).is_ok()
-                && session.docs.len() > count_before
-            {
+            if session.execute("file.open", &json!({"path": path})).is_ok() && session.docs.len() > count_before {
                 restored += 1;
             }
         }
@@ -807,10 +785,13 @@ impl Services for Desktop {
     fn fetch_url(&mut self, url: &str) -> Option<figcraft_ui_egui::TextFetchFuture> {
         let (tx, rx) = std::sync::mpsc::channel();
         let url_owned = url.to_string();
-        std::thread::Builder::new().name("figcraft-fetch-skill".into()).spawn(move || {
-            let res = figcraft_ai_net::fetch_text(&url_owned);
-            let _ = tx.send(res);
-        }).ok()?;
+        std::thread::Builder::new()
+            .name("figcraft-fetch-skill".into())
+            .spawn(move || {
+                let res = figcraft_ai_net::fetch_text(&url_owned);
+                let _ = tx.send(res);
+            })
+            .ok()?;
         Some(Box::pin(ChannelTextFuture { rx }))
     }
 }
@@ -828,9 +809,7 @@ impl std::future::Future for ChannelTextFuture {
                 cx.waker().wake_by_ref();
                 std::task::Poll::Pending
             }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                std::task::Poll::Ready(Err("Channel closed".to_string()))
-            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => std::task::Poll::Ready(Err("Channel closed".to_string())),
         }
     }
 }

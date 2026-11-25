@@ -137,8 +137,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     // 1. Search Box
     let (fr, _) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::hover());
     let field = Rect::from_min_max(pos2(fr.min.x + 8.0, fr.min.y + 4.0), pos2(fr.max.x - 8.0, fr.max.y - 4.0));
-    let r =
-        crate::widgets::search_box(ui, field, Id::unique("market_panel_search_field"), &mut app.ui.market_query, "Search prebuilt components...");
+    let r = crate::widgets::search_box(ui, field, Id::unique("market_panel_search_field"), &mut app.ui.market_query, "Search prebuilt components...");
     if r.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
         app.ui.market_query.clear();
     }
@@ -180,8 +179,8 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             let active = app.ui.market_registry == reg || (is_all && app.ui.market_registry.is_empty());
             let fill = if active { t.accent_on } else { t.hover };
             let text_color = if active { t.accent_text } else { t.text_secondary };
-            let chip_r =
-                ui.allocate_response(vec2(ui.painter().layout_no_wrap(label.into(), regular(10.0), text_color).size().x + 10.0, 18.0), Sense::click());
+            let chip_r = ui
+                .allocate_response(vec2(ui.painter().layout_no_wrap(label.into(), regular(10.0), text_color).size().x + 10.0, 18.0), Sense::click());
             if chip_r.hovered() || active {
                 ui.painter().rect_filled(chip_r.rect, CornerRadius::same(6), fill);
             } else {
@@ -242,10 +241,8 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             ui.painter().text(badge_pos, Align2::RIGHT_TOP, format!("{} • 100% Free", item.source), regular(10.0), t.accent);
 
             // 2. Exact Component Rendering / Visual Preview Box
-            let preview_rect = Rect::from_min_max(
-                pos2(card_rect.min.x + 8.0, card_rect.min.y + 30.0),
-                pos2(card_rect.max.x - 8.0, card_rect.min.y + 92.0),
-            );
+            let preview_rect =
+                Rect::from_min_max(pos2(card_rect.min.x + 8.0, card_rect.min.y + 30.0), pos2(card_rect.max.x - 8.0, card_rect.min.y + 92.0));
             paint_component_preview(ui.painter(), preview_rect, item.id, t.dark, t.text);
 
             // 3. Description
@@ -254,19 +251,15 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
             ui.painter().text(desc_pos, Align2::LEFT_TOP, &desc_elided, regular(10.0), t.text_secondary);
 
             // 4. Action Buttons (Bottom Row)
-            let add_btn_rect = Rect::from_min_max(
-                pos2(card_rect.max.x - 106.0, card_rect.max.y - 30.0),
-                pos2(card_rect.max.x - 8.0, card_rect.max.y - 8.0),
-            );
+            let add_btn_rect =
+                Rect::from_min_max(pos2(card_rect.max.x - 106.0, card_rect.max.y - 30.0), pos2(card_rect.max.x - 8.0, card_rect.max.y - 8.0));
             let add_resp = ui.interact(add_btn_rect, ui.scope_id().with(("add_market", item.id)), Sense::click());
             let add_fill = if add_resp.hovered() { t.accent } else { t.accent_on };
             ui.painter().rect_filled(add_btn_rect, CornerRadius::same(5), add_fill);
             ui.painter().text(add_btn_rect.center(), Align2::CENTER_CENTER, "+ Add to Canvas", semibold(10.5), t.accent_text);
 
-            let preview_btn_rect = Rect::from_min_max(
-                pos2(add_btn_rect.min.x - 68.0, card_rect.max.y - 30.0),
-                pos2(add_btn_rect.min.x - 6.0, card_rect.max.y - 8.0),
-            );
+            let preview_btn_rect =
+                Rect::from_min_max(pos2(add_btn_rect.min.x - 68.0, card_rect.max.y - 30.0), pos2(add_btn_rect.min.x - 6.0, card_rect.max.y - 8.0));
             let preview_resp = ui.interact(preview_btn_rect, ui.scope_id().with(("prev_market", item.id)), Sense::click());
             let prev_fill = if preview_resp.hovered() { t.hover } else { t.field };
             ui.painter().rect_filled(preview_btn_rect, CornerRadius::same(5), prev_fill);
@@ -280,14 +273,7 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
     });
 
     if let Some(comp_id) = to_insert
-        && let Ok(res) = figcraft_engine::chat_tools::instantiate_market_component(
-            &mut app.session,
-            comp_id,
-            200.0,
-            150.0,
-            None,
-            None,
-        )
+        && let Ok(res) = figcraft_engine::chat_tools::instantiate_market_component(&mut app.session, comp_id, 200.0, 150.0, None, None)
         && let Some(id) = res.get("id")
     {
         app.run("select.set", json!({ "ids": [id] }));
@@ -402,7 +388,13 @@ fn paint_component_preview(painter: &egui::Painter, rect: Rect, id: &str, dark: 
             painter.rect_filled(c_rect, CornerRadius::same(8), fill);
             painter.rect_stroke(c_rect, CornerRadius::same(8), Stroke::new(1.5, Color32::from_rgb(99, 102, 241)), StrokeKind::Inside);
             let text_pos = pos2(c_rect.min.x + 8.0, c_rect.min.y + 6.0);
-            painter.text(text_pos, Align2::LEFT_TOP, "Pro Plan • $29/mo", semibold(10.5), if dark { Color32::WHITE } else { Color32::from_rgb(15, 23, 42) });
+            painter.text(
+                text_pos,
+                Align2::LEFT_TOP,
+                "Pro Plan • $29/mo",
+                semibold(10.5),
+                if dark { Color32::WHITE } else { Color32::from_rgb(15, 23, 42) },
+            );
             let f_pos = pos2(c_rect.min.x + 8.0, c_rect.min.y + 22.0);
             painter.text(f_pos, Align2::LEFT_TOP, "✓ Unlimited canvas layers", regular(9.0), Color32::from_rgb(71, 85, 105));
             let btn_rect = Rect::from_min_size(pos2(c_rect.max.x - 48.0, c_rect.center().y - 8.0), vec2(42.0, 17.0));
@@ -429,7 +421,10 @@ fn paint_component_preview(painter: &egui::Painter, rect: Rect, id: &str, dark: 
             painter.rect_filled(c_rect, CornerRadius::same(6), fill);
             painter.rect_stroke(c_rect, CornerRadius::same(6), Stroke::new(1.0, Color32::from_rgb(226, 232, 240)), StrokeKind::Inside);
             let base_y = c_rect.max.y - 7.0;
-            painter.line_segment([pos2(c_rect.min.x + 8.0, base_y), pos2(c_rect.max.x - 8.0, base_y)], Stroke::new(1.0, Color32::from_rgb(226, 232, 240)));
+            painter.line_segment(
+                [pos2(c_rect.min.x + 8.0, base_y), pos2(c_rect.max.x - 8.0, base_y)],
+                Stroke::new(1.0, Color32::from_rgb(226, 232, 240)),
+            );
             let bar_heights = [12.0, 18.0, 26.0, 20.0, 30.0];
             let bar_colors = [
                 Color32::from_rgb(129, 140, 248),
@@ -454,7 +449,13 @@ fn paint_component_preview(painter: &egui::Painter, rect: Rect, id: &str, dark: 
             painter.rect_stroke(c_rect, CornerRadius::same(6), Stroke::new(1.0, Color32::from_rgb(226, 232, 240)), StrokeKind::Inside);
             let circle_center = pos2(c_rect.min.x + 28.0, c_rect.center().y);
             painter.circle_stroke(circle_center, 13.0, Stroke::new(4.5, Color32::from_rgb(99, 102, 241)));
-            painter.text(circle_center, Align2::CENTER_CENTER, "68%", semibold(8.5), if dark { Color32::WHITE } else { Color32::from_rgb(15, 23, 42) });
+            painter.text(
+                circle_center,
+                Align2::CENTER_CENTER,
+                "68%",
+                semibold(8.5),
+                if dark { Color32::WHITE } else { Color32::from_rgb(15, 23, 42) },
+            );
             let l1_pos = pos2(c_rect.min.x + 50.0, c_rect.min.y + 9.0);
             painter.text(l1_pos, Align2::LEFT_TOP, "● Direct: 68%", semibold(9.5), Color32::from_rgb(79, 70, 229));
             let l2_pos = pos2(c_rect.min.x + 50.0, c_rect.min.y + 23.0);
@@ -475,7 +476,13 @@ fn paint_component_preview(painter: &egui::Painter, rect: Rect, id: &str, dark: 
                 painter.text(pos2(col_rect.center().x, col_rect.min.y + 4.0), Align2::CENTER_TOP, *hdr, semibold(8.0), *col_text);
                 let task_rect = Rect::from_min_size(pos2(col_rect.min.x + 3.0, col_rect.min.y + 17.0), vec2(col_w - 6.0, 18.0));
                 painter.rect_filled(task_rect, CornerRadius::same(3), if dark { Color32::from_rgb(24, 26, 32) } else { Color32::WHITE });
-                painter.text(task_rect.center(), Align2::CENTER_CENTER, *task, regular(8.5), if dark { Color32::WHITE } else { Color32::from_rgb(15, 23, 42) });
+                painter.text(
+                    task_rect.center(),
+                    Align2::CENTER_CENTER,
+                    *task,
+                    regular(8.5),
+                    if dark { Color32::WHITE } else { Color32::from_rgb(15, 23, 42) },
+                );
             }
         }
         "@bundui/data-table" => {
@@ -486,14 +493,32 @@ fn paint_component_preview(painter: &egui::Painter, rect: Rect, id: &str, dark: 
             painter.rect_stroke(c_rect, CornerRadius::same(6), Stroke::new(1.0, Color32::from_rgb(226, 232, 240)), StrokeKind::Inside);
             let hdr_rect = Rect::from_min_size(c_rect.min, vec2(cw, 14.0));
             painter.rect_filled(hdr_rect, CornerRadius::same(4), if dark { Color32::from_rgb(36, 39, 48) } else { Color32::from_rgb(248, 250, 252) });
-            painter.text(pos2(hdr_rect.min.x + 6.0, hdr_rect.center().y), Align2::LEFT_CENTER, "NAME      ROLE      STATUS", semibold(7.5), Color32::from_rgb(100, 116, 139));
+            painter.text(
+                pos2(hdr_rect.min.x + 6.0, hdr_rect.center().y),
+                Align2::LEFT_CENTER,
+                "NAME      ROLE      STATUS",
+                semibold(7.5),
+                Color32::from_rgb(100, 116, 139),
+            );
             let r1_pos = pos2(c_rect.min.x + 6.0, c_rect.min.y + 22.0);
-            painter.text(r1_pos, Align2::LEFT_CENTER, "Sarah C.   Lead UI", regular(8.5), if dark { Color32::WHITE } else { Color32::from_rgb(15, 23, 42) });
+            painter.text(
+                r1_pos,
+                Align2::LEFT_CENTER,
+                "Sarah C.   Lead UI",
+                regular(8.5),
+                if dark { Color32::WHITE } else { Color32::from_rgb(15, 23, 42) },
+            );
             let badge1 = Rect::from_min_size(pos2(c_rect.max.x - 38.0, c_rect.min.y + 16.0), vec2(32.0, 12.0));
             painter.rect_filled(badge1, CornerRadius::same(3), Color32::from_rgb(209, 250, 229));
             painter.text(badge1.center(), Align2::CENTER_CENTER, "ACTIVE", semibold(7.0), Color32::from_rgb(6, 95, 70));
             let r2_pos = pos2(c_rect.min.x + 6.0, c_rect.min.y + 34.0);
-            painter.text(r2_pos, Align2::LEFT_CENTER, "Alex R.    DevOps", regular(8.5), if dark { Color32::WHITE } else { Color32::from_rgb(15, 23, 42) });
+            painter.text(
+                r2_pos,
+                Align2::LEFT_CENTER,
+                "Alex R.    DevOps",
+                regular(8.5),
+                if dark { Color32::WHITE } else { Color32::from_rgb(15, 23, 42) },
+            );
             let badge2 = Rect::from_min_size(pos2(c_rect.max.x - 38.0, c_rect.min.y + 28.0), vec2(32.0, 12.0));
             painter.rect_filled(badge2, CornerRadius::same(3), Color32::from_rgb(254, 243, 199));
             painter.text(badge2.center(), Align2::CENTER_CENTER, "PENDING", semibold(7.0), Color32::from_rgb(180, 83, 9));

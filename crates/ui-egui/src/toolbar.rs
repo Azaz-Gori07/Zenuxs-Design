@@ -622,7 +622,13 @@ fn flyout(app: &mut FigApp, ui: &mut Ui, g: &Group, bottom_left: egui::Pos2) {
                 ui.painter().rect_filled(r, CornerRadius::same(5), t.menu_hover);
             }
             icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 32.0, r.center().y), vec2(16.0, 16.0)), Icon::Image, t.menu_text);
-            ui.painter().text(pos2(r.min.x + 48.0, r.center().y), Align2::LEFT_CENTER, &*crate::i18n::command("file.placeImage", "Place image…"), regular(12.0), t.menu_text);
+            ui.painter().text(
+                pos2(r.min.x + 48.0, r.center().y),
+                Align2::LEFT_CENTER,
+                &*crate::i18n::command("file.placeImage", "Place image…"),
+                regular(12.0),
+                t.menu_text,
+            );
             ui.painter().text(pos2(r.max.x - 8.0, r.center().y), Align2::RIGHT_CENTER, pretty_shortcut("Shift+Cmd+K"), regular(12.0), t.menu_dim);
             if resp.clicked() {
                 place_image_clicked = true;

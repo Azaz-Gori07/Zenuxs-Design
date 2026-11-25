@@ -102,10 +102,17 @@ fn skills_tab_shows_standing_instructions_and_github_input() {
 
     // Simulating install markdown command
     let md = "---\nname: my-gh-skill\ndescription: downloaded\n---\n# My GH Skill\nRule.";
-    let res = u.app.session.execute("ai.skill.installMarkdown", &json!({
-        "markdown": md,
-        "url": "https://github.com/owner/repo"
-    })).expect("skill installed");
+    let res = u
+        .app
+        .session
+        .execute(
+            "ai.skill.installMarkdown",
+            &json!({
+                "markdown": md,
+                "url": "https://github.com/owner/repo"
+            }),
+        )
+        .expect("skill installed");
     assert_eq!(res["name"], "my-gh-skill");
     assert!(u.app.session.prefs.ai.skills.all().iter().any(|s| s.name == "my-gh-skill"));
 }

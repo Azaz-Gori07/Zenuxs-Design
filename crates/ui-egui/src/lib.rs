@@ -353,10 +353,10 @@ pub use panels::dev_mode;
 pub use panels::export_panel;
 pub use panels::frame_presets;
 pub use panels::icons_panel;
-pub use panels::market_panel;
 pub use panels::layers;
 pub use panels::layout_panel;
 pub use panels::list_drag;
+pub use panels::market_panel;
 pub use panels::proto_editor;
 pub use panels::proto_panel;
 pub use panels::right;
@@ -399,8 +399,8 @@ pub(crate) use clock::repaint_in;
 pub use clock::{AUTO_SAVE_SECS, AUTOSAVE_SECS, FrameClock, ToastClock};
 pub(crate) use open::{drop_overlay, dropped_bytes, is_document, opens};
 pub use services::{
-    ContentsFuture, DialogFuture, MAX_CLIPBOARD_PNG_BYTES, NoServices, ReadFuture, Services, TextFetchFuture, browser_can_read, browser_stopped, egui_copy_png,
-    egui_copy_text, unreadable,
+    ContentsFuture, DialogFuture, MAX_CLIPBOARD_PNG_BYTES, NoServices, ReadFuture, Services, TextFetchFuture, browser_can_read, browser_stopped,
+    egui_copy_png, egui_copy_text, unreadable,
 };
 use services::{DialogDone, PickFuture, Picked, RepaintWaker};
 pub use state::{

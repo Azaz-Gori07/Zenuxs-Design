@@ -236,7 +236,9 @@ fn main() -> eframe::Result {
     session.live.links = figcraft_collab_net::links::system();
     session.invite_links_startup();
     let first_run = svc.prefs.is_none() && args.join.is_none();
-    if args.files.is_empty() && args.join.is_none() && session.docs.is_empty()
+    if args.files.is_empty()
+        && args.join.is_none()
+        && session.docs.is_empty()
         && let Some(d) = services::config_dir()
     {
         services::restore_session_state(&d, &mut session);

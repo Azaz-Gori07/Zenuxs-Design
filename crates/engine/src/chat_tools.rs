@@ -31,13 +31,40 @@ pub fn is_media_tool(name: &str) -> bool {
 pub fn instead_of(name: &str) -> String {
     let n = name.to_ascii_lowercase();
     let has = |words: &[&str]| words.iter().any(|w| n.contains(w));
+    if name == "shell"
+        || name == "bash"
+        || name == "terminal"
+        || name == "exec"
+        || name == "cmd"
+        || name == "sh"
+        || name == "powershell"
+        || name == "system"
+    {
+        return format!(
+            "there is no tool called \"{name}\". sycnUI has NO operating system shell or terminal. You are in a canvas design environment. Use canvas tools: to find icons/avatars use `search_icons` & `add_icon_to_canvas`; to search components use `search_market_components`; to inspect canvas use `inspect_document` or `get_node`; to create shapes use `create_node` or `batch`."
+        );
+    }
     // The image arm comes first: "get_image" and "find_photo" also read as lookups, and a model
     // told to call `get_node` for a picture goes looking for a file on disk instead.
     let right = if has(&["market", "component", "components", "shadcn", "originui", "prebuilt", "template", "widget"]) {
         "search_market_components (to search 100% free prebuilt Shadcn components) or add_market_component_to_canvas (to place prebuilt components on canvas)"
     } else if has(&["icon", "icons", "symbol", "symbols", "avatar", "avatars", "glyph"]) {
         "search_icons (to search vector icons and avatars by query, e.g. query: 'user' or 'avatar') or add_icon_to_canvas (to place a vector icon on canvas)"
-    } else if has(&["shell", "bash", "terminal", "exec", "sh", "cli", "command_line", "cmd", "run_bash", "execute_command", "script", "file_search", "find_files"]) {
+    } else if has(&[
+        "shell",
+        "bash",
+        "terminal",
+        "exec",
+        "sh",
+        "cli",
+        "command_line",
+        "cmd",
+        "run_bash",
+        "execute_command",
+        "script",
+        "file_search",
+        "find_files",
+    ]) {
         "inspect_document (to examine existing pages and layers on the canvas), get_node (to inspect a layer), search_icons (to find vector icons/avatars), or search_market_components. sycnUI is a pure design app with no OS shell access; you cannot run terminal commands"
     } else if has(&["image", "images", "photo", "photos", "picture", "stock", "asset"]) {
         "source_image, which searches the public libraries that need no key and places what the Vision model approves — one call for every image slot on the screen"
@@ -778,15 +805,7 @@ fn add_child_frame(s: &mut crate::Session, parent: &Value, name: &str, w: f64, h
     s.execute_as(Some("AI"), "node.create", &params).ok()
 }
 
-fn add_child_text(
-    s: &mut crate::Session,
-    parent: &Value,
-    name: &str,
-    text: &str,
-    font_size: f64,
-    font_weight: i64,
-    color: &str,
-) -> Option<Value> {
+fn add_child_text(s: &mut crate::Session, parent: &Value, name: &str, text: &str, font_size: f64, font_weight: i64, color: &str) -> Option<Value> {
     let params = json!({
         "type": "text",
         "name": name,
@@ -1000,7 +1019,13 @@ fn build_chart_children(s: &mut crate::Session, r_id: &Value, comp_id: &str, get
             json!({"layout": "horizontal", "itemSpacing": 14.0, "padding": [10.0, 10.0, 0.0, 10.0]}),
         );
         if let Some(b) = bc.and_then(|v| v.get("id").cloned()) {
-            let bars = [("Bar Jan", 45.0, "#818cf8"), ("Bar Feb", 60.0, "#6366f1"), ("Bar Mar", 75.0, "#4f46e5"), ("Bar Apr", 70.0, "#4338ca"), ("Bar May", 95.0, "#3730a3")];
+            let bars = [
+                ("Bar Jan", 45.0, "#818cf8"),
+                ("Bar Feb", 60.0, "#6366f1"),
+                ("Bar Mar", 75.0, "#4f46e5"),
+                ("Bar Apr", 70.0, "#4338ca"),
+                ("Bar May", 95.0, "#3730a3"),
+            ];
             for (bn, bh, bc_col) in bars {
                 let _ = add_child_frame(s, &b, bn, 28.0, bh, json!({"cornerRadius": 4.0, "fills": [{"type": "solid", "color": bc_col}]}));
             }
@@ -1023,25 +1048,12 @@ fn build_complex_children(s: &mut crate::Session, r_id: &Value, comp_id: &str) {
             let _ = add_child_text(s, &h, "H Role", "ROLE", 11.0, 700, "#64748b");
             let _ = add_child_text(s, &h, "H Status", "STATUS", 11.0, 700, "#64748b");
         }
-        let tr = add_child_frame(
-            s,
-            r_id,
-            "Row 1",
-            380.0,
-            48.0,
-            json!({"layout": "horizontal", "padding": [12.0, 16.0, 12.0, 16.0]}),
-        );
+        let tr = add_child_frame(s, r_id, "Row 1", 380.0, 48.0, json!({"layout": "horizontal", "padding": [12.0, 16.0, 12.0, 16.0]}));
         if let Some(r) = tr.and_then(|v| v.get("id").cloned()) {
             let _ = add_child_text(s, &r, "User 1", "Sarah Chen", 13.0, 600, "#0f172a");
             let _ = add_child_text(s, &r, "Role 1", "Lead Designer", 12.0, 400, "#475569");
-            let badge = add_child_frame(
-                s,
-                &r,
-                "Badge Active",
-                56.0,
-                22.0,
-                json!({"cornerRadius": 10.0, "fills": [{"type": "solid", "color": "#d1fae5"}]}),
-            );
+            let badge =
+                add_child_frame(s, &r, "Badge Active", 56.0, 22.0, json!({"cornerRadius": 10.0, "fills": [{"type": "solid", "color": "#d1fae5"}]}));
             if let Some(b) = badge.and_then(|v| v.get("id").cloned()) {
                 let _ = add_child_text(s, &b, "Status", "ACTIVE", 10.0, 700, "#065f46");
             }
@@ -1166,10 +1178,7 @@ struct MarketComponentSpec {
 
 fn market_component_spec(comp_id: &str) -> MarketComponentSpec {
     if comp_id == "@shadcn/button"
-        || (comp_id.contains("button")
-            && !comp_id.contains("shimmer")
-            && !comp_id.contains("neo")
-            && !comp_id.contains("glow"))
+        || (comp_id.contains("button") && !comp_id.contains("shimmer") && !comp_id.contains("neo") && !comp_id.contains("glow"))
     {
         MarketComponentSpec {
             name: "Button / Primary",
@@ -1222,9 +1231,7 @@ fn market_component_spec(comp_id: &str) -> MarketComponentSpec {
             padding: json!([11.0, 20.0, 11.0, 20.0]),
             effects: Some(json!([{"type": "dropShadow", "color": "#ec489980", "offset": [0.0, 0.0], "radius": 18.0, "spread": 2.0}])),
         }
-    } else if comp_id == "@shadcn/input"
-        || (comp_id.contains("input") && !comp_id.contains("search") && !comp_id.contains("tag"))
-    {
+    } else if comp_id == "@shadcn/input" || (comp_id.contains("input") && !comp_id.contains("search") && !comp_id.contains("tag")) {
         MarketComponentSpec {
             name: "Input / Text Field",
             width: 240.0,
@@ -1431,13 +1438,8 @@ pub fn instantiate_market_component(
     parent: Option<&str>,
     custom_text: Option<&serde_json::Map<String, Value>>,
 ) -> Result<Value, String> {
-    let get_text = |key: &str, fallback: &str| -> String {
-        custom_text
-            .and_then(|ct| ct.get(key))
-            .and_then(Value::as_str)
-            .unwrap_or(fallback)
-            .to_string()
-    };
+    let get_text =
+        |key: &str, fallback: &str| -> String { custom_text.and_then(|ct| ct.get(key)).and_then(Value::as_str).unwrap_or(fallback).to_string() };
 
     let spec = market_component_spec(comp_id);
 

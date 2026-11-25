@@ -17,8 +17,8 @@ mod palette;
 mod select_layer;
 mod tree;
 
-pub use clipboard::paste;
 pub(crate) use clipboard::clipboard_png;
+pub use clipboard::paste;
 use clipboard::{figcraft_svg_export, text_layers_text};
 use palette::palette;
 #[cfg(test)]

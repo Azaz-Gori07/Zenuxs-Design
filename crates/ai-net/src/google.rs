@@ -196,7 +196,10 @@ mod tests {
         let parts = &body["contents"][0]["parts"];
         assert_eq!(parts[0]["text"], "Check this design");
         assert_eq!(parts[1]["inline_data"]["mime_type"], "image/png");
-        assert_eq!(parts[1]["inline_data"]["data"], "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
+        assert_eq!(
+            parts[1]["inline_data"]["data"],
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        );
     }
 
     #[test]

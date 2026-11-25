@@ -187,7 +187,10 @@ mod tests {
         assert_eq!(content[0]["type"], "input_text");
         assert_eq!(content[0]["text"], "Check this design");
         assert_eq!(content[1]["type"], "input_image");
-        assert_eq!(content[1]["image_url"], "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
+        assert_eq!(
+            content[1]["image_url"],
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        );
     }
 
     #[test]

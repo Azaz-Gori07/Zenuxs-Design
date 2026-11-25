@@ -367,9 +367,7 @@ impl Services for WebServices {
     }
     fn fetch_url(&mut self, url: &str) -> Option<figcraft_ui_egui::TextFetchFuture> {
         let url_owned = url.to_string();
-        Some(Box::pin(async move {
-            figcraft_ai_net::fetch_text_async(&url_owned).await
-        }))
+        Some(Box::pin(async move { figcraft_ai_net::fetch_text_async(&url_owned).await }))
     }
 }
 

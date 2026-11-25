@@ -1131,7 +1131,7 @@ fn share_ui(app: &mut FigApp, ui: &mut Ui, t: &Tokens, share: &Share) {
                     app.clipboard_set_text(&code);
                     app.toast(tr("Join code copied"));
                 }
-                if widgets::button(ui, tr("Copy link"), false, true).on_hover_text(tr("An invite link that opens FigCraft and joins")).clicked() {
+                if widgets::button(ui, tr("Copy link"), false, true).on_hover_text(tr("An invite link that opens sycnUI and joins")).clicked() {
                     app.clipboard_set_text(&link);
                     app.toast(tr("Invite link copied"));
                 }
@@ -1424,7 +1424,7 @@ pub fn publish_dialog(app: &mut FigApp, ctx: &egui::Context) {
         ui.set_width(380.0);
         widgets::label(
             ui,
-            tr("Uploads this file to a FigCraft server and keeps this tab in sync with it. You get a link to edit and a link to view."),
+            tr("Uploads this file to a sycnUI server and keeps this tab in sync with it. You get a link to edit and a link to view."),
             t.text,
         );
         widgets::label(ui, tr("Server address"), t.text_secondary);
