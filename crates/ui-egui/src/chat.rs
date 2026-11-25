@@ -87,6 +87,8 @@ pub struct Panel {
     pub review_rounds: usize,
     /// How many tools have run during this turn. Only a send that ran tools could have changed the document.
     pub tools_run_count: usize,
+    /// Node IDs created or modified during this send, so design audits scope only to touched layers.
+    pub touched_node_ids: Vec<i64>,
     /// The title being typed for a rename, when one is open.
     pub rename: Option<String>,
     /// Image currently attached to the composer draft (pasted from clipboard or selected).
@@ -125,6 +127,7 @@ impl Default for Panel {
             empty_answers: 0,
             review_rounds: 0,
             tools_run_count: 0,
+            touched_node_ids: Vec::new(),
             attached_image: None,
             focus_draft: false,
             last_selected_id: None,
@@ -217,12 +220,32 @@ You are the design agent inside sycnUI, an interface design tool. You create and
 by running sycnUI's own commands. Be direct, use design terminology, and after finishing give a \
 2-3 line summary: frame sizes, the accent colours, and anything still wrong.
 
+# Canvas environment - No shell or terminal access
+
+You are operating inside sycnUI's vector design canvas environment.
+- There is NO command line, terminal, bash, or operating system shell.
+- NEVER call `shell`, `bash`, `terminal`, `exec`, `cmd`, `sh`, or `pwd`.
+- sycnUI does not have OS shell tools. You interact ONLY with the canvas using sycnUI's tools:
+  * To inspect the document, pages, or layers: call `inspect_document` or `get_node`.
+  * To find vector icons or avatars: call `search_icons` (e.g. query \"user\" or \"avatar\") and `add_icon_to_canvas`.
+  * To find prebuilt components: call `search_market_components` and `add_market_component_to_canvas`.
+  * To create vector shapes or replicate logos: use `create_node` (frames, rectangles, vectors) or `batch`.
+
 # Multimodal and attached images
 
 When the user attaches or pastes an image or screenshot in the chat, carefully inspect its visual \
 hierarchy, layout structure, color palette, typography, components, and proportions. You have full vision \
 capability to examine the image. Directly build, replicate, or adapt the design on the canvas using \
 sycnUI tools (frames, auto layout, shapes, text, styling).
+
+# Replicating logos and vector graphics from images
+
+When the user asks to recreate, vectorize, or generate a logo from an image (e.g. \"make nebron logo like that without any background, only black\"):
+- Inspect the geometric components of the logo in the image (horizontal/vertical lines, curves, rounded rectangles, polygons, glyphs).
+- Draw them directly on the canvas using vector commands:
+  * Create a root frame or group with transparent background (no fills, or empty background).
+  * Draw each line or stroke using `create_node` with type \"rectangle\" or \"vector\" (e.g. width, height, cornerRadius) with fill `#000000` (black).
+  * Do NOT search for files or try to use terminal image converters. Directly compose the geometry on the canvas.
 
 # Mentioned and target elements
 
@@ -264,6 +287,8 @@ Everything the document takes is a command. Your tools are commands:
 - `review_design` — the same pixels, graded by the reviewer as a designer: hierarchy, alignment, spacing rhythm, type scale, contrast, and the specific faults with where each one is.
 - `search_market_components` — search 100% free verified prebuilt components from Shadcn ecosystem registries (@shadcn, @originui, @kibo, @cult, @animate-ui, @bundui, @neobrutalism). Use this FIRST before drawing primitive elements.
 - `add_market_component_to_canvas` — instantiate prebuilt Market components on canvas with customized props and titles.
+- `search_icons` — search curated vector icons and avatars by keyword (e.g. \"user\", \"avatar\", \"arrow\", \"star\").
+- `add_icon_to_canvas` — place an icon as a vector node onto the canvas.
 - `source_image` — a picture for a slot, searched in the public libraries that need no key and verified by the Vision model before it is placed. One call for every image on the screen.
 - `generate_image` — an original picture, when a photo would not exist. Needs an image model on the connection; `source_image` is the one that works with none.
 
@@ -351,6 +376,7 @@ pub fn send(app: &mut FigApp, text: &str) -> Result<(), String> {
     app.ui.chat.empty_answers = 0;
     app.ui.chat.review_rounds = 0;
     app.ui.chat.tools_run_count = 0;
+    app.ui.chat.touched_node_ids.clear();
 
     // The selection and the page, as the model reads them.
     let selection = selection_context(app);
@@ -890,6 +916,19 @@ pub fn drain(app: &mut FigApp, ctx: &Context) -> bool {
                 // A tool the model invented is an error it reads, naming the one that does the job.
                 None => Err(figcraft_engine::chat_tools::instead_of(&call.name)),
             };
+            if let Ok(ref val) = answer
+                && let Some(id) = val.get("id").and_then(Value::as_i64)
+            {
+                app.ui.chat.touched_node_ids.push(id);
+            }
+            if let Some(ids) = call.arguments.get("ids").and_then(Value::as_array) {
+                for id in ids.iter().filter_map(figcraft_engine::params::id_of) {
+                    app.ui.chat.touched_node_ids.push(id.0 as i64);
+                }
+            }
+            if let Some(id) = call.arguments.get("id").and_then(figcraft_engine::params::id_of) {
+                app.ui.chat.touched_node_ids.push(id.0 as i64);
+            }
             streaming.results.push((call.clone(), cap_result(&call.name, tool_answer_text(&answer))));
         }
         // The networked tools — MCP calls and the image tools — run on their worker, in the
@@ -1669,14 +1708,23 @@ fn audit_blockers(app: &mut FigApp) -> Option<String> {
     if findings.is_empty() {
         return None;
     }
+    let touched = &app.ui.chat.touched_node_ids;
     let mut out = String::new();
     for f in findings {
         let kind = f.get("kind").and_then(Value::as_str).unwrap_or("fault");
         let id = f.get("id").and_then(Value::as_i64).unwrap_or_default();
+        // If tools ran and created/touched specific layers, only report findings on those touched layers
+        // or ignore pre-existing empty slots that have nothing to do with this turn.
+        if !touched.is_empty() && !touched.contains(&id) {
+            continue;
+        }
         let name = f.get("name").and_then(Value::as_str).unwrap_or("");
         let detail = f.get("detail").and_then(Value::as_str).unwrap_or("");
         let fix = f.get("fix").and_then(Value::as_str).unwrap_or("");
         out.push_str(&format!("- [{kind}] layer {id} \"{name}\": {detail}. Fix: {fix}\n"));
+    }
+    if out.is_empty() {
+        return None;
     }
     Some(out)
 }
@@ -2579,7 +2627,12 @@ fn transcript_body(app: &mut FigApp, ui: &mut Ui, t: &Tokens, width: f32) {
     }
     for (i, message) in messages.iter().enumerate() {
         match message.role {
-            Role::User => user_message(ui, t, &message.content, &message.images, width),
+            Role::User => {
+                if message.content == EMPTY_ANSWER_NUDGE || message.content.starts_with(AUDIT_NUDGE) {
+                    continue;
+                }
+                user_message(ui, t, &message.content, &message.images, width);
+            }
             Role::Assistant => {
                 if !message.content.is_empty() {
                     answer(ui, t, &message.content, width);

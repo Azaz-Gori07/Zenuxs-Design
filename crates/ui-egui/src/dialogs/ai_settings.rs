@@ -711,7 +711,7 @@ fn plugins_tab(app: &mut FigApp, ui: &mut Ui, t: &Tokens) {
 fn storage_tab(app: &mut FigApp, ui: &mut Ui, editor: &mut Editor, ran: &mut Vec<(String, serde_json::Value)>, t: &Tokens) {
     section_header(ui, tr("Storage provider"), t);
     let provider = app.session.prefs.ai.storage_provider;
-    let names = [tr("FigCraft server").to_string(), tr("S3 storage").to_string()];
+    let names = [tr("sycnUI server").to_string(), tr("S3 storage").to_string()];
     let current = names[if provider == figcraft_ai::StorageProvider::S3Compatible { 1 } else { 0 }].clone();
     if widgets::combo_field(ui, egui::Id::unique("ai_storage_provider"), &current, 160.0, &names)
         .and_then(|name| (name == names[1]).then_some("s3-compatible").or_else(|| (name == names[0]).then_some("figcraft-server")))

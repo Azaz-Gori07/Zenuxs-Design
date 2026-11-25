@@ -51,11 +51,11 @@ const ISSUES: &str = "https://github.com/storytold/figcraft/issues";
 pub fn window_failed(error: &str, backend_set: bool, tried: Option<&str>) -> String {
     let hint = if let Some(apis) = tried {
         trf(
-            "FigCraft tried {apis}, then again with lower requirements on the power-saving GPU. Updating the graphics driver often helps.",
+            "sycnUI tried {apis}, then again with lower requirements on the power-saving GPU. Updating the graphics driver often helps.",
             &[("apis", &apis)],
         )
     } else if backend_set {
-        tr("WGPU_BACKEND is set and names the graphics API to use; unsetting it lets FigCraft choose.").to_string()
+        tr("WGPU_BACKEND is set and names the graphics API to use; unsetting it lets sycnUI choose.").to_string()
     } else if cfg!(windows) {
         // Direct3D 12 and OpenGL are both offered, but wgpu keeps the Direct3D 12 adapter it picked
         // even when its device then fails, so naming OpenGL alone can still help.
@@ -64,7 +64,7 @@ pub fn window_failed(error: &str, backend_set: bool, tried: Option<&str>) -> Str
 
 set WGPU_BACKEND=gl
 figcraft.exe",
-            tr("Updating the graphics driver often helps. To use OpenGL only, start FigCraft from a Command Prompt with:")
+            tr("Updating the graphics driver often helps. To use OpenGL only, start sycnUI from a Command Prompt with:")
         )
     } else {
         tr("Updating the graphics driver often helps. WGPU_BACKEND (vulkan, gl, metal) names another graphics API to try.").to_string()
@@ -75,7 +75,7 @@ figcraft.exe",
 {hint}
 
 {}",
-        trf("FigCraft couldn't open its window: {error}", &[("error", &error)]),
+        trf("sycnUI couldn't open its window: {error}", &[("error", &error)]),
         trf("If it keeps happening, please report it at {link} with this message.", &[("link", &ISSUES)])
     )
 }

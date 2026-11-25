@@ -35,8 +35,10 @@ pub fn instead_of(name: &str) -> String {
     // told to call `get_node` for a picture goes looking for a file on disk instead.
     let right = if has(&["market", "component", "components", "shadcn", "originui", "prebuilt", "template", "widget"]) {
         "search_market_components (to search 100% free prebuilt Shadcn components) or add_market_component_to_canvas (to place prebuilt components on canvas)"
-    } else if has(&["icon", "icons", "symbol", "symbols"]) {
-        "search_icons (to search icons by query) or add_icon_to_canvas (to place a vector icon on canvas)"
+    } else if has(&["icon", "icons", "symbol", "symbols", "avatar", "avatars", "glyph"]) {
+        "search_icons (to search vector icons and avatars by query, e.g. query: 'user' or 'avatar') or add_icon_to_canvas (to place a vector icon on canvas)"
+    } else if has(&["shell", "bash", "terminal", "exec", "sh", "cli", "command_line", "cmd", "run_bash", "execute_command", "script", "file_search", "find_files"]) {
+        "inspect_document (to examine existing pages and layers on the canvas), get_node (to inspect a layer), search_icons (to find vector icons/avatars), or search_market_components. sycnUI is a pure design app with no OS shell access; you cannot run terminal commands"
     } else if has(&["image", "images", "photo", "photos", "picture", "stock", "asset"]) {
         "source_image, which searches the public libraries that need no key and places what the Vision model approves — one call for every image slot on the screen"
     } else if has(&["font", "fonts", "typeface"]) {
@@ -437,10 +439,19 @@ fn export_without_a_file(s: &mut crate::Session, arguments: &Value) -> Result<Va
 
 /// Search curated and online icon collections by keyword (Font Awesome Free v6).
 fn search_icons(arguments: &Value) -> Result<Value, String> {
-    let query = arguments.get("query").and_then(Value::as_str).unwrap_or_default().trim().to_lowercase();
+    let raw_query = arguments.get("query").and_then(Value::as_str).unwrap_or_default().trim().to_lowercase();
+    let query = match raw_query.as_str() {
+        "avatar" | "avatars" | "profile" | "account" | "person" | "people" | "member" => "user",
+        "trash" | "delete" | "remove" => "trash",
+        "edit" | "write" => "pen",
+        "search" | "find" => "magnifying-glass",
+        other => other,
+    };
     let catalog = [
         "fa6-solid:house",
         "fa6-solid:user",
+        "fa6-solid:circle-user",
+        "fa6-solid:user-group",
         "fa6-solid:gear",
         "fa6-solid:magnifying-glass",
         "fa6-solid:star",
@@ -470,6 +481,7 @@ fn search_icons(arguments: &Value) -> Result<Value, String> {
         "fa6-regular:heart",
         "fa6-regular:star",
         "fa6-regular:user",
+        "fa6-regular:circle-user",
         "fa6-regular:envelope",
         "fa6-regular:calendar",
         "fa6-regular:comment",
@@ -487,7 +499,7 @@ fn search_icons(arguments: &Value) -> Result<Value, String> {
         "fa6-brands:linkedin",
         "fa6-brands:youtube",
     ];
-    let matched: Vec<&str> = if query.is_empty() { catalog.to_vec() } else { catalog.into_iter().filter(|id| id.contains(&query)).collect() };
+    let matched: Vec<&str> = if query.is_empty() { catalog.to_vec() } else { catalog.into_iter().filter(|id| id.contains(query)).collect() };
     Ok(json!(matched))
 }
 
@@ -654,6 +666,22 @@ fn search_market_components(arguments: &Value) -> Result<Value, String> {
             "category": "Cards",
             "description": "Modern Apple/Bento-style visual showcase card with subtle gradient background and icon highlight.",
             "tags": ["bento", "card", "showcase", "cult", "apple"]
+        }),
+        json!({
+            "id": "@shadcn/avatar",
+            "name": "User Avatar with Online Status",
+            "sourceRegistry": "@shadcn",
+            "category": "Cards",
+            "description": "Circular profile picture or monogram avatar with presence/online indicator badge.",
+            "tags": ["avatar", "profile", "user", "picture", "account", "shadcn"]
+        }),
+        json!({
+            "id": "@shadcn/avatar-group",
+            "name": "Stacked Team Avatars Group",
+            "sourceRegistry": "@shadcn",
+            "category": "Cards",
+            "description": "Overlapping circle user avatars with member count pill (+3, +5) for collaborative apps.",
+            "tags": ["avatar", "avatars", "group", "team", "users", "collaborators", "shadcn"]
         }),
         json!({
             "id": "@shadcn/area-chart",
@@ -1064,6 +1092,65 @@ fn build_animation_children(s: &mut crate::Session, r_id: &Value, comp_id: &str,
     }
 }
 
+fn build_avatar_children(s: &mut crate::Session, r_id: &Value, comp_id: &str, get_text: &dyn Fn(&str, &str) -> String) {
+    if comp_id == "@shadcn/avatar-group" || comp_id.contains("group") {
+        let colors = ["#6366f1", "#ec4899", "#10b981"];
+        let initials = ["JD", "AS", "MK"];
+        for i in 0..3 {
+            let item = add_child_frame(
+                s,
+                r_id,
+                &format!("Avatar {i}"),
+                40.0,
+                40.0,
+                json!({
+                    "cornerRadius": 999.0,
+                    "fills": [{"type": "solid", "color": colors[i]}],
+                    "strokes": [{"type": "solid", "color": "#ffffff", "width": 2.0}],
+                    "layout": "horizontal",
+                    "padding": [0.0, 0.0, 0.0, 0.0],
+                }),
+            );
+            if let Some(av) = item.and_then(|v| v.get("id").cloned()) {
+                let _ = add_child_text(s, &av, "Initials", initials[i], 13.0, 700, "#ffffff");
+            }
+        }
+        let more = add_child_frame(
+            s,
+            r_id,
+            "Avatar Count",
+            40.0,
+            40.0,
+            json!({
+                "cornerRadius": 999.0,
+                "fills": [{"type": "solid", "color": "#1e293b"}],
+                "strokes": [{"type": "solid", "color": "#ffffff", "width": 2.0}],
+                "padding": [0.0, 0.0, 0.0, 0.0],
+            }),
+        );
+        if let Some(m) = more.and_then(|v| v.get("id").cloned()) {
+            let count = get_text("Count", "+3");
+            let _ = add_child_text(s, &m, "Count Text", &count, 12.0, 700, "#ffffff");
+        }
+    } else {
+        let _ = get_text("Name", "Sarah Jenkins");
+        let initials = get_text("Initials", "SJ");
+        let _ = add_child_text(s, r_id, "Initials", &initials, 16.0, 700, "#ffffff");
+        let _ = add_child_frame(
+            s,
+            r_id,
+            "Online Status",
+            12.0,
+            12.0,
+            json!({
+                "cornerRadius": 999.0,
+                "fills": [{"type": "solid", "color": "#22c55e"}],
+                "strokes": [{"type": "solid", "color": "#ffffff", "width": 2.0}],
+            }),
+        );
+    }
+}
+
 struct MarketComponentSpec {
     name: &'static str,
     width: f64,
@@ -1293,6 +1380,32 @@ fn market_component_spec(comp_id: &str) -> MarketComponentSpec {
             padding: json!([18.0, 18.0, 18.0, 18.0]),
             effects: Some(json!([{"type": "dropShadow", "color": "#0284c728", "offset": [0.0, 8.0], "radius": 24.0, "spread": -2.0}])),
         }
+    } else if comp_id == "@shadcn/avatar" || (comp_id.contains("avatar") && !comp_id.contains("group")) {
+        MarketComponentSpec {
+            name: "Avatar / User Profile",
+            width: 48.0,
+            height: 48.0,
+            fills: json!([{"type": "solid", "color": "#6366f1"}]),
+            corner_radius: 999.0,
+            stroke: Some("#4f46e5"),
+            layout_mode: "horizontal",
+            item_spacing: 0.0,
+            padding: json!([0.0, 0.0, 0.0, 0.0]),
+            effects: Some(json!([{"type": "dropShadow", "color": "#6366f130", "offset": [0.0, 2.0], "radius": 6.0, "spread": 0.0}])),
+        }
+    } else if comp_id == "@shadcn/avatar-group" || comp_id.contains("avatar-group") {
+        MarketComponentSpec {
+            name: "Avatar / Team Stack",
+            width: 140.0,
+            height: 44.0,
+            fills: json!([{"type": "solid", "color": "#ffffff00"}]),
+            corner_radius: 999.0,
+            stroke: None,
+            layout_mode: "horizontal",
+            item_spacing: -10.0,
+            padding: json!([0.0, 0.0, 0.0, 0.0]),
+            effects: None,
+        }
     } else {
         MarketComponentSpec {
             name: "Market / Component",
@@ -1376,6 +1489,8 @@ pub fn instantiate_market_component(
             build_complex_children(s, r_id, comp_id);
         } else if comp_id.contains("marquee") || comp_id.contains("spotlight") {
             build_animation_children(s, r_id, comp_id, &get_text);
+        } else if comp_id.contains("avatar") {
+            build_avatar_children(s, r_id, comp_id, &get_text);
         } else {
             let title = get_text("Title", &format!("Component {comp_id}"));
             let _ = add_child_text(s, r_id, "Title", &title, 14.0, 700, "#0f172a");
@@ -1876,5 +1991,31 @@ mod tests {
         assert_eq!(neo_node.corners.radii[0], 6.0);
         assert!(!neo_node.effects.is_empty(), "neo button must have hard shadow");
         assert!(!neo_node.strokes.is_empty(), "neo button must have solid black stroke");
+    }
+
+    #[test]
+    fn avatar_and_shell_resolution_works() {
+        assert!(instead_of("shell").contains("sycnUI is a pure design app with no OS shell access"));
+        assert!(instead_of("bash").contains("sycnUI is a pure design app with no OS shell access"));
+
+        let res = search_icons(&json!({"query": "avatar"})).expect("search runs");
+        let list: Vec<String> = serde_json::from_value(res).expect("array");
+        assert!(list.iter().any(|s| s.contains("user")), "avatar query matches user icons: {:?}", list);
+        assert!(list.iter().any(|s| s.contains("circle-user")), "includes circle-user: {:?}", list);
+
+        let market_res = search_market_components(&json!({"query": "avatar"})).expect("search market runs");
+        let items = market_res.as_array().expect("array");
+        assert!(items.iter().any(|it| it["id"] == "@shadcn/avatar"));
+        assert!(items.iter().any(|it| it["id"] == "@shadcn/avatar-group"));
+
+        let mut s = crate::Session::empty();
+        let _ = s.execute("file.new", &json!({}));
+        let added = instantiate_market_component(&mut s, "@shadcn/avatar", 10.0, 10.0, None, None).expect("instantiate avatar");
+        assert_eq!(added["status"], "inserted");
+        assert_eq!(added["name"], "Avatar / User Profile");
+
+        let group_added = instantiate_market_component(&mut s, "@shadcn/avatar-group", 50.0, 10.0, None, None).expect("instantiate avatar group");
+        assert_eq!(group_added["status"], "inserted");
+        assert_eq!(group_added["name"], "Avatar / Team Stack");
     }
 }
