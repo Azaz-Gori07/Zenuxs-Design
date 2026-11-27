@@ -5,9 +5,10 @@
 <h1 align="center">sycnUI</h1>
 
 <p align="center">
-  <b>Interface design and prototyping: open source, collaborative and built in pure Rust.</b><br>
-  Frames, auto layout, components and variants, vector networks, styles, variables and prototypes,<br>
-  in a native app that opens instantly and works offline. Powered by Zenuxs.
+  <b>AI-Native Interface Design & Prototyping: Autonomous, Collaborative, and Built in Pure Rust.</b><br>
+  Design full screens, mobile apps, and design systems with a conversational AI design partner,<br>
+  backed by vector networks, auto layout, component marketplace, and production-ready code export.
+  <br><i>Powered by Zenuxs.</i>
 </p>
 
 <p align="center">
@@ -20,17 +21,18 @@
 <br>
 
 <p align="center">
-  <img src="docs/images/shot-1-hero.png" alt="sycnUI in its dark theme editing the Ridgeline hiking app: three phone screens (Home in light mode, a trail detail page and Home in dark mode) on the canvas, the Featured trail card instance selected, the layers panel showing the screen's auto layout tree, and the Design panel showing the instance's Fill and Hug auto layout sizing, its Theme variable mode and a fill bound to the surface colour variable" width="100%">
-  <br><sub><b>Ridgeline</b>: auto layout screens built from components, with Light and Dark modes from one set of colour variables · <code>examples/ridgeline-app</code></sub>
+  <img src="docs/images/sycnui-hero.png" alt="sycnUI AI in action: designing an AI analytics dashboard in dark theme with the sycnUI AI panel, live reasoning, skills, and target container selection on the canvas" width="100%">
+  <br><sub><b>sycnUI AI in action</b>: autonomously building and refining a modern analytics dashboard with live reasoning, Apple design skills, and component marketplace integration</sub>
 </p>
 
 <br>
 
 <p align="center">
+  <a href="#the-ai-design-partner">AI Design Partner</a> ·
   <a href="#a-look-around">A look around</a> ·
   <a href="#made-in-sycnui">Made in sycnUI</a> ·
   <a href="#features">Features</a> ·
-  <a href="#built-for-agents">Agents</a> ·
+  <a href="#built-for-agents">Agents & CLI</a> ·
   <a href="#under-the-hood">Under the hood</a> ·
   <a href="#get-started">Get started</a> ·
   <a href="#privacy-and-online-sharing">Privacy & Sharing</a>
@@ -41,23 +43,55 @@
 <table>
   <tr>
     <td width="25%" valign="top">
-      <h3>🎛️ Familiar by design</h3>
-      The toolbar, layers panel, Design panel, menus and shortcuts sit right where your hands expect them.
+      <h3>🤖 AI-First Design</h3>
+      A conversational AI design partner built directly into the editor. Generate complete screens, redesign containers with <code>@Mentions</code>, and steer generation with slash skills like <code>/apple-design</code>.
     </td>
     <td width="25%" valign="top">
-      <h3>⚡ Native and fast</h3>
-      A Rust engine with a persistent document model: edits touch only what changed, so creating a node in a 20,000-node file takes a fraction of a millisecond. No Electron, no web view.
+      <h3>🧩 Component Market</h3>
+      Integrated ecosystem with 100+ production components from <code>@shadcn</code>, <code>@originui</code>, <code>@kibo</code>, and <code>@cult</code>, ready to insert or style via AI with a single click.
     </td>
     <td width="25%" valign="top">
-      <h3>🔌 Offline and private</h3>
-      Your files are plain local archives on your own disk. No account, no telemetry, and nothing leaves your computer unless you share a file (<a href="#privacy-and-online-sharing">what sharing sends where</a>). SVG, PNG, JPG, WebP and PDF in and out; <code>.fig</code> files open (best effort), and so do designs exported as the public REST API file JSON, with their prototypes and variables.
+      <h3>⚡ Native Rust Engine</h3>
+      A pure Rust engine with a persistent document model. Edits and AI modifications touch only what changed — zero lag, instant startup, no Electron, and no web views.
     </td>
     <td width="25%" valign="top">
-      <h3>🤖 Agent-ready</h3>
-      Every menu item, tool and drag is a command, so the same engine runs from the UI, the CLI, a JSON control channel or an MCP server.
+      <h3>🔌 Offline and Private</h3>
+      Your files are plain local archives on your disk. No telemetry, no cloud dependency, and complete privacy for your designs and AI prompts.
     </td>
   </tr>
 </table>
+
+<br>
+
+## The AI Design Partner
+
+sycnUI brings autonomous generative interface design directly to the vector canvas. Instead of producing flat mockup images, the AI operates sycnUI's native command engine to construct real layers, auto-layout frames, text styles, and component instances.
+
+<table>
+<tr>
+<td width="50%" valign="top">
+  <img src="docs/images/sycnui-skills.png" alt="Slash commands and design skills autocomplete in sycnUI AI" width="100%">
+  <p align="center"><sub><b>Slash Commands & Skills</b>: steer AI with curated design guidelines like <code>/apple-design</code>, <code>/impeccable</code>, and <code>/mobile-native</code></sub></p>
+</td>
+<td width="50%" valign="top">
+  <img src="docs/images/sycnui-market.png" alt="Prebuilt Component Marketplace in sycnUI" width="100%">
+  <p align="center"><sub><b>Component Marketplace</b>: browse and insert buttons, cards, charts, and tables from <code>@shadcn</code> and <code>@originui</code> directly to canvas</sub></p>
+</td>
+</tr>
+</table>
+
+### Core AI Capabilities
+
+- **Natural Language to Full UI**: Prompt the AI to build complete responsive screens, mobile applications, web dashboards, or marketing pages from scratch with high-contrast typography, harmonious color ramps, and auto layout.
+- **Precision Redesign with `@Mention`**: Select or `@Mention` any container on your canvas (e.g. `@Hero Card`, `@Login Screen`). sycnUI AI cleans obsolete child elements with `clear_node_children` and rebuilds the contents in place, preserving coordinates, dimensions, and auto-layout settings.
+- **Isolated Per-Tab AI Sessions**: Every document tab holds its own independent conversation history, composer draft, and background streaming. You can prompt the AI in one tab and immediately switch to another tab without interrupting or corrupting background generation.
+- **Design System Skills via Slash Commands**: Trigger curated design engineering frameworks with slash commands:
+  - `/apple-design` — Apple Human Interface Guidelines, Liquid Glass, iOS & macOS craft.
+  - `/impeccable` — Production-grade UI craft, typographic scale, and polish.
+  - `/market` — Component-first workflow utilizing prebuilt accessible components.
+  - `/animate` — Motion curves, physics springs, and purposeful micro-interactions.
+  - `/mobile-native` — Native touch targets, bottom sheets, and mobile UX.
+- **Prompt Iteration & History**: Easily edit previous prompts, copy text, or revert the conversation back to any turn with dedicated quick-action buttons under every message.
 
 <br>
 
@@ -66,42 +100,42 @@
 <table>
 <tr>
 <td width="50%" valign="top">
-  <img src="docs/images/shot-2-components.png" alt="The Ridgeline UI design system open with the Assets panel on the left showing live thumbnails of the Button, Difficulty, Search field, Toggle and icon components; a Button component set of nine variants laid out in a three-by-three grid auto layout is selected, and the Design panel lists its Style (Primary, Tonal, Outline) and State (Default, Hover, Disabled) variant properties" width="100%">
+  <img src="docs/images/shot-2-components.png" alt="The UI design system open with the Assets panel on the left showing live thumbnails of components" width="100%">
   <p align="center"><sub><b>Components and variants</b>: component sets, variant properties and the Assets panel · <code>examples/ridgeline-design-system</code></sub></p>
 </td>
 <td width="50%" valign="top">
-  <img src="docs/images/shot-3-prototype.png" alt="Four onboarding phone screens in the Prototype tab, joined by green connection curves from the Get started, Continue, Allow location and Not now buttons to the next screens; the Get started button is selected and the Prototype panel shows its On click, Navigate to 2 Interests interaction" width="100%">
+  <img src="docs/images/shot-3-prototype.png" alt="Four onboarding phone screens in the Prototype tab, joined by green connection curves" width="100%">
   <p align="center"><sub><b>Prototyping</b>: connections, transitions, back actions and a flow · <code>examples/ridgeline-onboarding</code></sub></p>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
-  <img src="docs/images/shot-4-devmode.png" alt="Developer Mode on the Ridgeline home screen: the frame carries a Ready for dev badge, a Development annotation callout points at the featured trail card, a trail row instance is selected and the Inspect panel shows a Playground preview of it and generated React code with a TrailRow props interface and the instance's title and details values" width="100%">
+  <img src="docs/images/shot-4-devmode.png" alt="Developer Mode on the home screen showing annotations and generated React code" width="100%">
   <p align="center"><sub><b>Developer Mode</b>: ready-for-dev status, annotations and React code where component properties become props · <code>examples/ridgeline-app</code></sub></p>
 </td>
 <td width="50%" valign="top">
-  <img src="docs/images/shot-5-vector.png" alt="Vector edit mode on a wave path with a gradient, tapered variable-width stroke: its anchor points, Bezier handles and the transform box of the selected points are visible, with the vector edit toolbar at the bottom; above it are a boolean-built mountain mark and an angular-gradient knot of excluded rings" width="100%">
+  <img src="docs/images/shot-5-vector.png" alt="Vector edit mode on a wave path with a gradient" width="100%">
   <p align="center"><sub><b>Vector networks</b>: points and handles, variable-width strokes, booleans that stay editable · <code>examples/glass-and-vectors</code></sub></p>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
-  <img src="docs/images/shot-6-dashboard-light.png" alt="The light UI theme with a web analytics dashboard for a fictional trail operator: a dark sidebar, KPI cards with sparklines, a grouped bar chart, a donut chart, a table of top trails and an area chart, with the frame's 12-column layout grid showing as tinted columns and its fill linked to a paint style" width="100%">
-  <p align="center"><sub><b>Layout grids and styles, light theme</b>: a 12-column grid, paint, text, effect and grid styles, charts drawn from shapes · <code>examples/ridgeline-studio-dashboard</code></sub></p>
+  <img src="docs/images/shot-6-dashboard-light.png" alt="The light UI theme with a web analytics dashboard" width="100%">
+  <p align="center"><sub><b>Layout grids and styles</b>: a 12-column grid, paint, text, effect and grid styles, charts drawn from shapes · <code>examples/ridgeline-studio-dashboard</code></sub></p>
 </td>
 <td width="50%" valign="top">
-  <img src="docs/images/shot-7-collab.png" alt="A live session seen from one participant's window: avatars of three people in the top right, a Priya Nair is spotlighting banner with a Follow button, Priya's green cursor and selection outline on the dark home screen's trail card, and Jonas Ortiz's purple cursor and selection on the Start hike button with his cursor chat bubble asking whether the button should stay pinned while scrolling" width="100%">
+  <img src="docs/images/shot-7-collab.png" alt="A live session with avatars and selections" width="100%">
   <p align="center"><sub><b>Live sessions</b>: multi-user collaboration with cursors, selections, cursor chat and spotlight</sub></p>
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
-  <img src="docs/images/shot-8-board.png" alt="A board file named Sprint retro on a dot grid: a Sprint 14 retro made from the retrospective template, with Went well, To improve and Next steps sections of sticky notes, vote counts of 3, 2, 1 and 1 on four stickies after a vote has ended, and below it a pull request flow chart from the flow chart template whose shapes are joined by straight and elbow connectors with Yes and No labels; a timer pill in the top right shows 4:30 left with pause, add a minute, stop and Results buttons" width="100%">
-  <p align="center"><sub><b>Boards</b>: a whiteboard file kind with sticky notes, templates, connectors, a shared timer and voting, in the same live sessions</sub></p>
+  <img src="docs/images/shot-8-board.png" alt="A board file with sticky notes and flow chart" width="100%">
+  <p align="center"><sub><b>Boards</b>: a whiteboard file kind with sticky notes, templates, connectors, a shared timer and voting</sub></p>
 </td>
 <td width="50%" valign="top">
-  <img src="docs/images/shot-9-devmode-measure.png" alt="Developer Mode on the Ridgeline home screen with the featured trail card selected: red redlines kept on the canvas show 118.3 from the card to the search field, 62.1 from the card to the first trail row and 256.3 along the card's left side, and the Inspect panel's Measurements section lists the three with their values under an Add measurement menu" width="100%">
-  <p align="center"><sub><b>Developer Mode measurements</b>: redlines placed between layers or along a side, saved in the file and following the layers · <code>examples/ridgeline-app</code></sub></p>
+  <img src="docs/images/shot-9-devmode-measure.png" alt="Developer Mode measurements on canvas" width="100%">
+  <p align="center"><sub><b>Developer Mode measurements</b>: redlines placed between layers or along a side, saved in the file · <code>examples/ridgeline-app</code></sub></p>
 </td>
 </tr>
 </table>
@@ -115,38 +149,38 @@ exposes to agents, and exported at 2x by sycnUI's own renderer. The source files
 <table>
 <tr>
 <td width="33%" valign="top">
-  <img src="docs/images/art-app-home.png" alt="Ridgeline home screen in light mode: a greeting, a search field, filter chips, a featured trail card with an illustrated mountain landscape, a list of nearby trails and a translucent tab bar" width="100%">
+  <img src="docs/images/art-app-home.png" alt="Ridgeline home screen in light mode" width="100%">
   <p align="center"><sub><b>Home, light</b></sub></p>
 </td>
 <td width="33%" valign="top">
-  <img src="docs/images/art-app-trail.png" alt="Ridgeline trail detail screen: a dusk mountain illustration with glass buttons, a sheet with difficulty tags, the trail name, distance, elevation and duration stats, an elevation profile chart and a Start hike button" width="100%">
+  <img src="docs/images/art-app-trail.png" alt="Ridgeline trail detail screen" width="100%">
   <p align="center"><sub><b>Trail detail</b></sub></p>
 </td>
 <td width="33%" valign="top">
-  <img src="docs/images/art-app-home-dark.png" alt="The same Ridgeline home screen in dark mode, its colours switched by the Theme variable collection's Dark mode" width="100%">
+  <img src="docs/images/art-app-home-dark.png" alt="The same Ridgeline home screen in dark mode" width="100%">
   <p align="center"><sub><b>Home, dark</b>: the same frame in the Dark mode</sub></p>
 </td>
 </tr>
 <tr>
 <td colspan="3" valign="top">
-  <img src="docs/images/art-dashboard.png" alt="Ridgeline Studio dashboard: a dark navy sidebar with navigation, KPI cards for active hikers, check-ins, average rating and open incidents with sparklines, a hikes-per-day grouped bar chart with a tooltip, a difficulty donut chart, a top trails table with condition badges and a visitors area chart" width="100%">
+  <img src="docs/images/art-dashboard.png" alt="Ridgeline Studio dashboard" width="100%">
   <p align="center"><sub><b>Ridgeline Studio</b>: a desktop dashboard on a 12-column grid, every chart made of shapes and vectors</sub></p>
 </td>
 </tr>
 <tr>
 <td colspan="2" valign="top">
-  <img src="docs/images/art-glass-weather.png" alt="A glass weather widget over blurred teal, violet, rose and orange colour fields: a frosted card for Lake Louise showing 14 degrees and partly cloudy with a gradient sun behind a boolean-union cloud, an hourly forecast row, and smaller glass cards for air quality, wind and humidity" width="100%">
+  <img src="docs/images/art-glass-weather.png" alt="A glass weather widget over blurred color fields" width="100%">
   <p align="center"><sub><b>Glass weather</b>: glass and background blur, layer-blurred colour fields, a boolean cloud</sub></p>
 </td>
 <td width="33%" valign="top">
-  <img src="docs/images/art-vector-marks.png" alt="Three tiles on a cream background: a gradient mountain mark made by unioning two peaks and subtracting a sun, a knot of three excluded rings with an angular gradient, and a tapered gradient wave with a leaf and a glowing four-point star" width="100%">
+  <img src="docs/images/art-vector-marks.png" alt="Vector tiles on cream background" width="100%">
   <p align="center"><sub><b>Vector marks</b>: union, subtract and exclude, an angular gradient, a variable-width stroke</sub></p>
 </td>
 </tr>
 <tr>
 <td colspan="3" valign="top">
-  <img src="docs/images/art-ds-colour.png" alt="Ridgeline UI colour ramps: six swatches each of Pine greens, Sunset oranges and Slate greys, each labelled with its name and hex value" width="100%">
-  <p align="center"><sub><b>Ridgeline UI</b>: colour ramps where every swatch is a paint style, exported through a slice</sub></p>
+  <img src="docs/images/art-ds-colour.png" alt="UI colour ramps" width="100%">
+  <p align="center"><sub><b>Design System</b>: colour ramps where every swatch is a paint style, exported through a slice</sub></p>
 </td>
 </tr>
 </table>
